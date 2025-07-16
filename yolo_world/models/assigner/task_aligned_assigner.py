@@ -7,9 +7,8 @@ from mmyolo.models.task_modules.assigners.utils import select_highest_overlaps
 
 @TASK_UTILS.register_module()
 class YOLOWorldSegAssigner(BatchTaskAlignedAssigner):
-
-    def __init__(self,
-                 num_classes: int,
+    def __init__(self, 
+                 num_classes: int, 
                  topk: int = 13,
                  alpha: float = 1,
                  beta: float = 6,
@@ -17,15 +16,17 @@ class YOLOWorldSegAssigner(BatchTaskAlignedAssigner):
                  use_ciou: bool = False):
         super().__init__(num_classes, topk, alpha, beta, eps, use_ciou)
 
-    @torch.no_grad()
+    @torch.no_grad() # torch.no_grad() is used to disable gradient calculation
     def forward(
         self,
-        pred_bboxes: Tensor,
-        pred_scores: Tensor,
-        priors: Tensor,
-        gt_labels: Tensor,
-        gt_bboxes: Tensor,
-        pad_bbox_flag: Tensor,
+        pred_bboxes: Tensor, # shape (batch_size, num_priors, 4). predicted bounding boxes [[cx, cy, w, h], ...]
+        pred_scores: Tensor, # shape (batch_size, num_priors, num_classes). predicted scores [[class1_score, class2_score, ...], ...]
+        priors: Tensor, # shape (num_priors, 4). model priors [[cx, cy, w, h], ...]
+        # "priors" means reference information which some models have before checking input data, which is like predict value, reference value, etc.
+
+        gt_labels: Tensor, # shape (batch_size, num_gt, 1). ground truth labels [[class1], [class2], ...]
+        gt_bboxes: Tensor,  # shape (batch_size, num_gt, 4). ground truth bounding boxes [[x1, y1, x2, y2], ...]
+        pad_bbox_flag: Tensor, # shape (batch_size, num_gt, 1). ground truth bbox mask, 1 means bbox, 0 means no bbox
     ) -> dict:
         """Assign gt to bboxes.
 
@@ -60,10 +61,10 @@ class YOLOWorldSegAssigner(BatchTaskAlignedAssigner):
                     shape(batch_size, num_priors)
         """
         # (num_priors, 4) -> (num_priors, 2)
-        priors = priors[:, :2]
+        priors = priors[:, :2] # [[cx, cy], ...] of priors
 
-        batch_size = pred_scores.size(0)
-        num_gt = gt_bboxes.size(1)
+        batch_size = pred_scores.size(dim=0) 
+        num_gt = gt_bboxes.size(dim=1)
 
         assigned_result = {
             'assigned_labels':
