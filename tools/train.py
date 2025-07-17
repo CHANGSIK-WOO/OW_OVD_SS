@@ -57,9 +57,10 @@ def main():
 
     # load config
     cfg = Config.fromfile(args.config)
+    ### cfg is a Config object, which is a dict-like object
     # replace the ${key} with the value of cfg.key
     # cfg = replace_cfg_vals(cfg)
-    cfg.launcher = args.launcher
+    cfg.launcher = args.launcher # launcher is used to determine how to run the job e.g. 'none', 'pytorch', 'slurm', 'mpi'
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
@@ -68,11 +69,12 @@ def main():
         # update configs according to CLI args if args.work_dir is not None
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
+        # value = cfg['work_dir'] if "work_dir' in cfg else None
         # use config filename as default work_dir if cfg.work_dir is None
         if args.config.startswith('projects/'):
             config = args.config[len('projects/'):]
             config = config.replace('/configs/', '/')
-            cfg.work_dir = osp.join('./work_dirs', osp.splitext(config)[0])
+            cfg.work_dir = osp.join('./work_dirs', osp.splitext(config)[0]) #splitext removes the file extension
         else:
             cfg.work_dir = osp.join('./work_dirs',
                                     osp.splitext(osp.basename(args.config))[0])
@@ -93,6 +95,7 @@ def main():
             cfg.optim_wrapper.loss_scale = 'dynamic'
 
     # resume is determined in this priority: resume from > auto_resume
+    # resume means to resume from the latest checkpoint in the work directory
     if args.resume == 'auto':
         cfg.resume = True
         cfg.load_from = None
@@ -104,6 +107,9 @@ def main():
     is_metainfo_lower(cfg)
 
     # build the runner from config
+    # "runner_type" is used to determine which runner to use
+    # ex. runner_type = "YOLOWv5Runner", then it will use the YOLOWv5Runner
+    # runner is main engine to control the training / evaluation process.
     if 'runner_type' not in cfg:
         # build the default runner
         runner = Runner.from_cfg(cfg)

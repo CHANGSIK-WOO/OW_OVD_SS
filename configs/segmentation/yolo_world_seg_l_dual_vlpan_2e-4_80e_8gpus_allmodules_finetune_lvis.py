@@ -20,11 +20,11 @@ persistent_workers = False
 text_model_name = '../pretrained_models/clip-vit-base-patch32-projection'
 # text_model_name = 'openai/clip-vit-base-patch32'
 # Polygon2Mask
-downsample_ratio = 4
-mask_overlap = False
-use_mask2refine = True
-max_aspect_ratio = 100
-min_area_ratio = 0.01
+downsample_ratio = 4 # Downsample ratio for Polygon2Mask (ex. 4--> 1/4 resolution)
+mask_overlap = False # Whether to use mask overlap in Polygon2Mask
+use_mask2refine = True # Whether to use mask2refine in YOLOv5RandomAffine
+max_aspect_ratio = 100 # Maximum aspect ratio for YOLOv5RandomAffine (filtering out extreme aspect ratios)
+min_area_ratio = 0.01 # Minimum area ratio for YOLOv5RandomAffine (filtering out small objects)
 
 # model settings
 model = dict(

@@ -77,7 +77,7 @@ def main():
     cfg = Config.fromfile(args.config)
     # replace the ${key} with the value of cfg.key
     # cfg = replace_cfg_vals(cfg)
-    cfg.launcher = args.launcher
+    cfg.launcher = args.launcher # launcher is used to determine how to run the job e.g. 'none', 'pytorch', 'slurm', 'mpi'
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
