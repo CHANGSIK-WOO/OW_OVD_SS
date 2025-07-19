@@ -41,14 +41,17 @@ class ContrastiveHead(BaseModule):
 
         super().__init__(init_cfg=init_cfg)
 
+        # x = x * self.logit_scale.exp() + self.bias
         self.bias = nn.Parameter(torch.zeros([]))
-        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07)) # log(1 / 0.07) = Softmax Temperature ~ 14.28 = role is to scale the logits
         self.use_einsum = use_einsum
 
     def forward(self, x: Tensor, w: Tensor) -> Tensor:
         """Forward function of contrastive learning."""
-        x = F.normalize(x, dim=1, p=2)
-        w = F.normalize(w, dim=-1, p=2)
+
+        # normalize the image and text features w.r.t the channel dimension
+        x = F.normalize(x, dim=1, p=2) # x = image features (b, c, h, w) b = batch size, c = channels, h = height, w = width
+        w = F.normalize(w, dim=-1, p=2) # w = text features (b, k, c) b = batch size, k = number of text features, c = channels
 
         if self.use_einsum:
             x = torch.einsum('bchw,bkc->bkhw', x, w)
@@ -58,7 +61,7 @@ class ContrastiveHead(BaseModule):
             x = x.permute(0, 2, 3, 1)  # bchw->bhwc
             x = x.reshape(batch, -1, channel)  # bhwc->b(hw)c
             w = w.permute(0, 2, 1)  # bkc->bck
-            x = torch.matmul(x, w)
+            x = torch.matmul(x, w) # b(hw)c @ bck -> b(hw)k, matmul is matrix multiplication in each batch
             x = x.reshape(batch, height, width, k)
             x = x.permute(0, 3, 1, 2)
 
@@ -452,19 +455,19 @@ class OurHead(YOLOv8Head):
             known_logits = known_logits.sigmoid().permute(0, 2, 3, 1)
             unknown_logits = unknown_logits.sigmoid().permute(0, 2, 3, 1)
 
-            # 计算已知类别的不确定性
+            # 溫←츞藥꿰윥映삣닽�쉪訝띸‘若싨��
             uncertainty = self.calculate_uncertainty(known_logits)
             # uncertainty = 0
-            # 计算属性不确定性并调整属性权重
+            # 溫←츞掠욄�㏛툖簾�若싨�㎩뭉瘟껅빐掠욄�㎪쓢�뇥
             # top_k_att_score = self.select_top_k_attributes(unknown_logits, k=self.top_k)
             top_k_att_score = self.compute_weighted_top_k_attributes(unknown_logits, k=self.top_k)
             #top_k_att_score = unknown_logits.max(dim=-1, keepdim=True)[0]
-            # 融合已知和未知类别的预测
+            # �엻�릦藥꿰윥�뭽�쑋�윥映삣닽�쉪窯꾣탩
             
             unknown_logits_final = (top_k_att_score + uncertainty) / 2 * (1 - known_logits.max(-1, keepdim=True)[0])
             # unknown_logits_final = (top_k_att_score) * (1 - known_logits.max(-1, keepdim=True)[0])
             
-            # 合并已知和未知类别的最终预测结果
+            # �릦亮뜹럴�윥�뭽�쑋�윥映삣닽�쉪���瀯덆쥋役뗧퍜�옖
             logits = torch.cat([known_logits, unknown_logits_final], dim=-1).permute(0, 3, 1, 2)
             ret_logits.append(logits)
         
