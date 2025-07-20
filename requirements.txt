@@ -1,9 +1,10 @@
 wheel
+numpy==1.26.4
 torch==2.0.0
 torchvision==0.15.1
 transformers==4.33.0
 tokenizers
-numpy
+
 opencv-python
 supervision==0.19.0
 mmdet==3.3.0
