@@ -51,7 +51,7 @@ class ContrastiveHead(BaseModule):
 
         # normalize the image and text features w.r.t the channel dimension
         x = F.normalize(x, dim=1, p=2) # x = image features (b, c, h, w) b = batch size, c = channels, h = height, w = width
-        w = F.normalize(w, dim=-1, p=2) # w = text features (b, k, c) b = batch size, k = number of text features, c = channels
+        w = F.normalize(w, dim=-1, p=2) # w = texXt features (b, k, c) b = batch size, k = number of text features, c = channels
 
         if self.use_einsum:
             x = torch.einsum('bchw,bkc->bkhw', x, w)
@@ -66,6 +66,7 @@ class ContrastiveHead(BaseModule):
             x = x.permute(0, 3, 1, 2)
 
         x = x * self.logit_scale.exp() + self.bias
+        # logits = (img_feat @ txt_teat.T) * exp(logit_scale)
         return x
 
 
@@ -139,7 +140,7 @@ class OurHeadModule(YOLOv8HeadModule):
         for cls_pred, cls_contrast, stride in zip(self.cls_preds,
                                                   self.cls_contrasts,
                                                   self.featmap_strides):
-            cls_pred[-1].bias.data[:] = 0.0  # reset bias
+            cls_pred[-1].bias.data[:] = 0.0  # reset bias. cls_pred[-1] : last conv layer(class logit) of cls_pred
             if hasattr(cls_contrast, 'bias'):
                 nn.init.constant_(
                     cls_contrast.bias.data,
@@ -148,9 +149,13 @@ class OurHeadModule(YOLOv8HeadModule):
     def _init_layers(self) -> None:
         """initialize conv layers in YOLOv8 head."""
         # Init decouple head
-        self.cls_preds = nn.ModuleList()
-        self.reg_preds = nn.ModuleList()
-        self.cls_contrasts = nn.ModuleList()
+        self.cls_preds = nn.ModuleList() #class predictions layer [batch, num_classes, H, W]
+        self.reg_preds = nn.ModuleList() #Regression(Bounding Box Regression) Predictions layer [batch, 4, H, W]. 4 = [cx, cy, w, h] or [l, t, r, b]
+        self.cls_contrasts = nn.ModuleList() #Classification Contrastive layer [batch, embed_dim : 256 ~ 1024, H, W]
+        # NCHW [Number, channel, Height, Width]
+        # (1) NLP : [batch_size, Seq_len : Token #, Embedding_dim]
+        # (2) flatten data : [batch_size, num_anchors, num_channels]
+        # (3) Channel size : [batch_size, Sequence_length, channel_size(H*W)] 
 
         reg_out_channels = max(
             (16, self.in_channels[0] // 4, self.reg_max * 4))
@@ -205,7 +210,7 @@ class OurHeadModule(YOLOv8HeadModule):
                     ContrastiveHead(self.embed_dims,
                                     use_einsum=self.use_einsum))
 
-        proj = torch.arange(self.reg_max, dtype=torch.float)
+        proj = torch.arange(self.reg_max, dtype=torch.float) # [0, 1, ... , reg_max - 1]
         self.register_buffer('proj', proj, persistent=False)
 
         if self.freeze_all:
