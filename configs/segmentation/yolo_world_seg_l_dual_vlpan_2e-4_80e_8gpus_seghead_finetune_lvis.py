@@ -150,11 +150,11 @@ coco_train_dataset = dict(
     _delete_=True,
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
-                 data_root='data/coco',
-                 ann_file='lvis/lvis_v1_train_base.json',
+                 data_root='../drive/MyDrive/data/coco/LVIS_semantic_masks', #data_root='data/coco', 
+                 ann_file='../drive/MyDrive/data/coco/lvis/lvis_v1_val.json', #ann_file='lvis/lvis_v1_train_base.json',
                  data_prefix=dict(img=''),
                  filter_cfg=dict(filter_empty_gt=True, min_size=32)),
-    class_text_path='data/texts/lvis_v1_base_class_texts.json',
+    class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/texts/lvis_v1_base_class_texts.json',
     pipeline=train_pipeline)
 train_dataloader = dict(persistent_workers=persistent_workers,
                         batch_size=train_batch_size_per_gpu,
@@ -220,12 +220,12 @@ coco_val_dataset = dict(
     _delete_=True,
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
-                 data_root='data/coco/',
+                 data_root='../drive/MyDrive/data/coco/LVIS_semantic_masks', #data_root='data/coco/',
                  test_mode=True,
-                 ann_file='lvis/lvis_v1_val.json',
+                 ann_file='../drive/MyDrive/data/coco/lvis/lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
                  data_prefix=dict(img=''),
                  batch_shapes_cfg=None),
-    class_text_path='data/captions/lvis_v1_class_captions.json',
+    class_text_path='data/lvis_v1_base_class_captions.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
     pipeline=test_pipeline)
 val_dataloader = dict(dataset=coco_val_dataset)
 test_dataloader = val_dataloader
