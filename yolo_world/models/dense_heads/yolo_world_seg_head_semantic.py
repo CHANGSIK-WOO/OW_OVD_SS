@@ -503,9 +503,10 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
             _assigned_gt_idxs = assigned_gt_idxs + batch_inds
 
             for bs in range(num_imgs):
-                gt_instance = batch_gt_instances[bs]
+                gt_instance = batch_gt_instances[bs] # InstanceData (batch no, labels, bboxes)
                 instance_masks  = batch_gt_masks[bs] # (N, H, W)
-                labels = gt_instance.labels # (N, )
+                labels = gt_instance[..., 1].long()  # (N, ) labels
+                bbox = gt_instance[..., 2:]  # (N, 4) bboxes
 
                 # Create a semantic ground truth mask
                 semantic_gt = torch.zeros((mask_h, mask_w), dtype=torch.long, device=instance_masks.device)
@@ -522,7 +523,7 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                     if gt_idx < 0 or gt_idx >= len(labels):
                         continue
 
-                    cls_id = gt_labels[bs, gt_idx].item()
+                    cls_id = labels[gt_idx].item()
                     mask_preds_class[cls_id] += mask_preds_raw[pred_idx]
                 
                 loss_mask += self.loss_mask(mask_preds_class.unsqueeze(0), semantic_gt.unsqueeze(0))
