@@ -59,7 +59,7 @@ model = dict(
                                     freeze_bbox=True),
                    mask_overlap=mask_overlap,
                    loss_mask=dict(type='mmdet.CrossEntropyLoss',
-                                  use_sigmoid=True,
+                                  use_sigmoid=False,
                                   reduction='none'),
                    loss_mask_weight=1.0),
     train_cfg=dict(

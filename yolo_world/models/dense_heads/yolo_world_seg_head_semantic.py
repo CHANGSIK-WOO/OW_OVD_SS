@@ -379,6 +379,8 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
             dict[str, Tensor]: A dictionary of losses.
         """
         num_imgs = len(batch_img_metas)
+        print("num_imgs :", num_imgs)
+        print("batch_img_metas :", batch_img_metas)
 
         current_featmap_sizes = [
             cls_score.shape[2:] for cls_score in cls_scores
@@ -503,30 +505,26 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
             _assigned_gt_idxs = assigned_gt_idxs + batch_inds
 
             for bs in range(num_imgs):
-                gt_instance = batch_gt_instances[bs] # InstanceData (batch no, labels, bboxes)
-                instance_masks  = batch_gt_masks[bs] # (N, H, W)
-                labels = gt_instance[..., 1].long()  # (N, ) labels
-                bbox = gt_instance[..., 2:]  # (N, 4) bboxes
+              gt_instance = batch_gt_instances[bs]   # shape (6,)
+              instance_mask = batch_gt_masks[bs]     # (H, W)
 
-                # Create a semantic ground truth mask
-                semantic_gt = torch.zeros((mask_h, mask_w), dtype=torch.long, device=instance_masks.device)
-                
-                # Fill the semantic ground truth mask with class labels
-                for idx, label in enumerate(labels):
-                    semantic_gt[instance_masks[idx] > 0] = label
-                
-                mask_preds_raw = (flatten_pred_coeffs[bs] @ proto_preds[bs].view(c, -1)).view(-1, mask_h, mask_w)  
-                mask_preds_class = torch.zeros((self.num_classes, mask_h, mask_w), device=mask_preds_raw.device)
+              label = int(gt_instance[1])            # label 하나
+              bbox = gt_instance[2:]                 # bbox (4,)
 
-                    # assigned_gt_idxs 활용해서 class별로 pooling (여기 좀 더 다듬을 수 있음)
-                for pred_idx, gt_idx in enumerate(assigned_gt_idxs[bs]):
-                    if gt_idx < 0 or gt_idx >= len(labels):
-                        continue
+              semantic_gt = torch.zeros((mask_h, mask_w), dtype=torch.long, device=instance_mask.device)
+              semantic_gt[instance_mask > 0] = label
 
-                    cls_id = labels[gt_idx].item()
-                    mask_preds_class[cls_id] += mask_preds_raw[pred_idx]
-                
-                loss_mask += self.loss_mask(mask_preds_class.unsqueeze(0), semantic_gt.unsqueeze(0))
+              mask_preds_raw = (flatten_pred_coeffs[bs] @ proto_preds[bs].view(c, -1)).view(-1, mask_h, mask_w)
+              mask_preds_class = torch.zeros((self.num_classes, mask_h, mask_w), device=mask_preds_raw.device)
+
+              for pred_idx, gt_idx in enumerate(assigned_gt_idxs[bs]):
+                gt_idx = int(gt_idx)
+                if gt_idx < 0:
+                  continue
+
+                mask_preds_class[label] += mask_preds_raw[pred_idx]
+
+              loss_mask += self.loss_mask(mask_preds_class.unsqueeze(0), semantic_gt.unsqueeze(0))
 
             # for bs in range(num_imgs):
             #     # 8400
