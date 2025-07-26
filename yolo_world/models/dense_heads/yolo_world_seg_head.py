@@ -26,31 +26,28 @@ from mmyolo.models.dense_heads.yolov5_ins_head import (
 from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
 
-@MODELS.register_module() #'type': 'YOLOWorldSegHeadModule'
+@MODELS.register_module()
 class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
-                 *args, # YOLOv8HeadModule positional arguments
-                 embed_dims: int, #class embedding dimensions
-                 proto_channels: int, # Channels for proto module 
-                 mask_channels: int, # Channels for mask prediction
-                 freeze_bbox: bool = False, # Freeze bbox layers
-                 freeze_all: bool = False, # Freeze bbox and all layers
+                 *args,
+                 embed_dims: int,
+                 proto_channels: int,
+                 mask_channels: int,
+                 freeze_bbox: bool = False,
+                 freeze_all: bool = False,
                  use_bn_head: bool = False,
-                 **kwargs) -> None: # YOLOv8HeadModule keyword arguments
+                 **kwargs) -> None:
         self.embed_dims = embed_dims
         self.proto_channels = proto_channels
         self.mask_channels = mask_channels
         self.freeze_bbox = freeze_bbox
         self.freeze_all = freeze_all
         self.use_bn_head = use_bn_head
-        super().__init__(*args, **kwargs) # Initialize YOLOv8HeadModule
+        super().__init__(*args, **kwargs)
 
     def init_weights(self, prior_prob=0.01):
-        """Initialize the weight and bias of PP-YOLO-E head."""
+        """Initialize the weight and bias of PPYOLOE head."""
         super().init_weights()
-        # cls_pred : class prediction (what class the box belongs to)
-        # cls_contrast : contrastive head for class embedding
-        # stride : feature map stride (FPN feature resolutions like 8, 16, 32)
         for cls_pred, cls_contrast, stride in zip(self.cls_preds,
                                                   self.cls_contrasts,
                                                   self.featmap_strides):
@@ -63,13 +60,13 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def _init_layers(self) -> None:
         """initialize conv layers in YOLOv8 head."""
         # Init decouple head
-        self.cls_preds = nn.ModuleList() #classfication & embedding prediction
-        self.reg_preds = nn.ModuleList() #bbox regression prediction
-        self.seg_preds = nn.ModuleList() #segmentation prediction
-        self.cls_contrasts = nn.ModuleList() #contrastive head for class embedding (cosine similarity with CLIP text embedding)
+        self.cls_preds = nn.ModuleList()
+        self.reg_preds = nn.ModuleList()
+        self.seg_preds = nn.ModuleList()
+        self.cls_contrasts = nn.ModuleList()
 
         reg_out_channels = max(
-            (16, self.in_channels[0] // 4, self.reg_max * 4)) # ex. in_channels[0] = 256, reg_max = 16 -> reg_out_channels = 256 // 4 = 64
+            (16, self.in_channels[0] // 4, self.reg_max * 4))
         seg_out_channels = max(self.in_channels[0] // 4, self.mask_channels)
         cls_out_channels = max(self.in_channels[0], self.num_classes)
 
@@ -80,7 +77,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
             bbox_norm_cfg['requires_grad'] = False
 
         for i in range(self.num_levels):
-            self.reg_preds.append( #self.cls_preds = [head_for_P3, head_for_P4, head_for_P5]
+            self.reg_preds.append(
                 nn.Sequential(
                     ConvModule(in_channels=self.in_channels[i],
                                out_channels=reg_out_channels,
@@ -88,17 +85,17 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                                stride=1,
                                padding=1,
                                norm_cfg=bbox_norm_cfg,
-                               act_cfg=self.act_cfg), # spatial information no channel reduction, just channel dimension reduction
+                               act_cfg=self.act_cfg),
                     ConvModule(in_channels=reg_out_channels,
                                out_channels=reg_out_channels,
                                kernel_size=3,
                                stride=1,
                                padding=1,
                                norm_cfg=bbox_norm_cfg,
-                               act_cfg=self.act_cfg), # spatial information no channel reduction, just channel information increase
+                               act_cfg=self.act_cfg),
                     nn.Conv2d(in_channels=reg_out_channels,
                               out_channels=4 * self.reg_max,
-                              kernel_size=1))) # spatial information no channel reduction, just channel dimension reduction
+                              kernel_size=1)))
             self.cls_preds.append(
                 nn.Sequential(
                     ConvModule(in_channels=self.in_channels[i],
@@ -144,7 +141,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
             else:
                 self.cls_contrasts.append(ContrastiveHead(self.embed_dims))
 
-        proj = torch.arange(self.reg_max, dtype=torch.float) # [0, 1, 2, ..., reg_max-1], expected = torch.sum(softmax(logits) * proj)
+        proj = torch.arange(self.reg_max, dtype=torch.float)
         self.register_buffer('proj', proj, persistent=False)
 
         self.proto_pred = ProtoModule(in_channels=self.in_channels[0],
@@ -175,45 +172,38 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
 
     def forward(self, img_feats: Tuple[Tensor],
                 txt_feats: Tensor) -> Tuple[List]:
-        #img_feats: List[Tensor] = [img_feats for _ in range(self.num_levels)] (P3, P4, P5 : 3 feature maps)
-        #txt_feats: Tensor (just one text feature, not list)
-
         """Forward features from the upstream network."""
-        assert len(img_feats) == self.num_levels # Check if the number of feature maps matches num_levels
-        
-        txt_feats = [txt_feats for _ in range(self.num_levels)] # copy txt_feats for each feature map
-        mask_protos = self.proto_pred(img_feats[0]) # mask prototypes from the first feature map
-
+        assert len(img_feats) == self.num_levels
+        txt_feats = [txt_feats for _ in range(self.num_levels)]
+        mask_protos = self.proto_pred(img_feats[0])
         cls_logit, bbox_preds, bbox_dist_preds, coeff_preds = multi_apply(
             self.forward_single, img_feats, txt_feats, self.cls_preds,
-            self.reg_preds, self.cls_contrasts, self.seg_preds) # call forward_single for each feature map
-        
+            self.reg_preds, self.cls_contrasts, self.seg_preds)
         if self.training:
-            return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos # return bbox_dist_preds for calaculating bbox distribution loss when training
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos
         else:
-            return cls_logit, bbox_preds, None, coeff_preds, mask_protos # return None for bbox_dist_preds when testing, since we don't need bbox distribution loss
+            return cls_logit, bbox_preds, None, coeff_preds, mask_protos
 
     def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
                        cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
                        cls_contrast: nn.ModuleList,
                        seg_pred: nn.ModuleList) -> Tuple:
-        
         """Forward feature of a single scale level."""
-        b, _, h, w = img_feat.shape # b : batch size, _ : channels, h : height, w : width
-        cls_embed = cls_pred(img_feat) # class embedding prediction (b, embed_dims, h, w)
-        cls_logit = cls_contrast(cls_embed, txt_feat) # class logits (b, num_classes, h, w)
-        bbox_dist_preds = reg_pred(img_feat) # bbox distribution prediction (b, reg_max * 4, h, w)
-        coeff_pred = seg_pred(img_feat) # mask coefficients prediction (b, mask_channels, h, w)
-        if self.reg_max > 1: 
+        b, _, h, w = img_feat.shape
+        cls_embed = cls_pred(img_feat)
+        cls_logit = cls_contrast(cls_embed, txt_feat)
+        bbox_dist_preds = reg_pred(img_feat)
+        coeff_pred = seg_pred(img_feat)
+        if self.reg_max > 1:
             bbox_dist_preds = bbox_dist_preds.reshape(
-                [-1, 4, self.reg_max, h * w]).permute(0, 3, 1, 2) # (b, h * w, 4, reg_max)
+                [-1, 4, self.reg_max, h * w]).permute(0, 3, 1, 2)
 
             # TODO: The get_flops script cannot handle the situation of
             #  matmul, and needs to be fixed later
             # bbox_preds = bbox_dist_preds.softmax(3).matmul(self.proj)
-            bbox_preds = bbox_dist_preds.softmax(dim=3).matmul( #softmax(3) means softmax along the 3rd dimension (reg_max) : softmax(dim=3)
-                self.proj.view([-1, 1])).squeeze(-1) #proj : (1, reg_max) -> (reg_max, 1) -> (b, h*w, 4, 1) --> (b, h*w, 4)
-            bbox_preds = bbox_preds.transpose(1, 2).reshape(b, -1, h, w) #  (b, h*w, 4) -> (b, 4, h*w) -> (b, 4, h, w)
+            bbox_preds = bbox_dist_preds.softmax(3).matmul(
+                self.proj.view([-1, 1])).squeeze(-1)
+            bbox_preds = bbox_preds.transpose(1, 2).reshape(b, -1, h, w)
         else:
             bbox_preds = bbox_dist_preds
         if self.training:
@@ -274,6 +264,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
         """
         if self.train_cfg:
             self.assigner = TASK_UTILS.build(self.train_cfg.assigner)
+            print(f"[DEBUG] Assigner class: {self.assigner.__class__.__name__}")
             # Add common attributes to reduce calculation
             self.featmap_sizes_train = None
             self.num_level_priors = None
@@ -287,7 +278,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
         """Perform forward propagation and loss calculation of the detection
         head on the features of the upstream network."""
 
-        outs = self(img_feats, txt_feats) # self.forward(img_feats, txt_feats)
+        outs = self(img_feats, txt_feats)
         # Fast version
         loss_inputs = outs + (batch_data_samples['bboxes_labels'],
                               batch_data_samples['masks'],
