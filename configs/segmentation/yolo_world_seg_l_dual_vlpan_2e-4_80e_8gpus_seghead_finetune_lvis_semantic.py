@@ -151,7 +151,7 @@ coco_train_dataset = dict(
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
                  data_root='../drive/MyDrive/data/coco/', #data_root='data/coco', 
-                 ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_train_base.json',
+                 ann_file='lvis/lvis_v1_val.json', #ann_file='lvis/lvis_v1_train_base.json',
                  data_prefix=dict(img=''),
                  filter_cfg=dict(filter_empty_gt=True, min_size=32)),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/texts/lvis_v1_base_class_texts.json',
@@ -222,16 +222,17 @@ coco_val_dataset = dict(
     dataset=dict(type='YOLOv5LVISV1Dataset',
                  data_root='../drive/MyDrive/data/coco/', #data_root='data/coco/',
                  test_mode=True,
-                 ann_file='lvis_v1_image_info_test_dev.json', #ann_file='lvis/lvis_v1_val.json',
+                 ann_file='lvis/lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json', 
+                 # FileNotFoundError: [Errno 2] No such file or directory: '../drive/MyDrive/data/coco/LVIS_semantic_masks/../drive/MyDrive/data/coco/lvis/lvis_v1_val.json'
                  data_prefix=dict(img=''),
                  batch_shapes_cfg=None),
-    class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
+    class_text_path='data/texts/lvis_v1_base_class_captions.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
     pipeline=test_pipeline)
 val_dataloader = dict(dataset=coco_val_dataset)
 test_dataloader = val_dataloader
 
 val_evaluator = dict(type='mmdet.LVISMetric',
-                     ann_file='../drive/MyDrive/data/coco/lvis_v1_image_info_test_dev.json',
+                     ann_file='../drive/MyDrive/data/coco/lvis/lvis_v1_val.json', #ann_file='data/coco/lvis/lvis_v1_val.json',
                      metric=['bbox', 'segm'])
 test_evaluator = val_evaluator
 find_unused_parameters = True
