@@ -62,7 +62,9 @@ model = dict(
                                   use_sigmoid=True,
                                   reduction='none'),
                    loss_mask_weight=1.0),
-    train_cfg=dict(assigner=dict(num_classes=num_training_classes)),
+    train_cfg=dict(
+        assigner=dict(type='YOLOWorldSegAssigner',
+                      num_classes=num_training_classes)),
     test_cfg=dict(mask_thr_binary=0.5, fast_test=True))
 
 pre_transform = [
@@ -235,3 +237,4 @@ val_evaluator = dict(type='mmdet.LVISMetric',
                      metric=['bbox', 'segm'])
 test_evaluator = val_evaluator
 find_unused_parameters = True
+# runtime settings
