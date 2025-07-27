@@ -59,7 +59,7 @@ model = dict(
                                     freeze_bbox=True),
                    mask_overlap=mask_overlap,
                    loss_mask=dict(type='mmdet.CrossEntropyLoss',
-                                  use_sigmoid=False,
+                                  use_sigmoid=False, # previously True --> False for semantic segmentation
                                   reduction='none'),
                    loss_mask_weight=1.0),
     train_cfg=dict(

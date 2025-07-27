@@ -30,9 +30,9 @@ from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
                  *args,
-                 embed_dims: int,
-                 proto_channels: int,
-                 mask_channels: int,
+                 embed_dims: int, 
+                 proto_channels: int, # 256 channels
+                 mask_channels: int, # 32 channels
                  freeze_bbox: bool = False,
                  freeze_all: bool = False,
                  use_bn_head: bool = False,
@@ -77,6 +77,9 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
             bbox_norm_cfg['requires_grad'] = False
 
         for i in range(self.num_levels):
+            # (B, 4 * reg_max, H, W)
+            # image representation for the bounding box regression
+            # reg_max : DFL (Distribution Focal Loss) max value
             self.reg_preds.append(
                 nn.Sequential(
                     ConvModule(in_channels=self.in_channels[i],
@@ -96,7 +99,9 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                     nn.Conv2d(in_channels=reg_out_channels,
                               out_channels=4 * self.reg_max,
                               kernel_size=1)))
-            self.cls_preds.append(
+            # (B, embed_dims, H, W), embed_dims = text_channels
+            # image representation for what class the object belongs to in corresponding grid cell
+            self.cls_preds.append( 
                 nn.Sequential(
                     ConvModule(in_channels=self.in_channels[i],
                                out_channels=cls_out_channels,
@@ -115,6 +120,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                     nn.Conv2d(in_channels=cls_out_channels,
                               out_channels=self.embed_dims,
                               kernel_size=1)))
+            # (B, mask_channels, H, W), mask_channels = 32
             self.seg_preds.append(
                 nn.Sequential(
                     ConvModule(in_channels=self.in_channels[i],
@@ -139,11 +145,14 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                 self.cls_contrasts.append(
                     BNContrastiveHead(self.embed_dims, self.norm_cfg))
             else:
-                self.cls_contrasts.append(ContrastiveHead(self.embed_dims))
+                self.cls_contrasts.append(ContrastiveHead(self.embed_dims)) #initialization of contrastive head
 
+        # tensor([0.0, 1.0, 2.0, ..., 15.0]). shape (16, )
         proj = torch.arange(self.reg_max, dtype=torch.float)
+        
         self.register_buffer('proj', proj, persistent=False)
 
+        # (B, proto_channels, H, W)
         self.proto_pred = ProtoModule(in_channels=self.in_channels[0],
                                       middle_channels=self.proto_channels,
                                       mask_channels=self.mask_channels,
@@ -190,20 +199,42 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                        seg_pred: nn.ModuleList) -> Tuple:
         """Forward feature of a single scale level."""
         b, _, h, w = img_feat.shape
-        cls_embed = cls_pred(img_feat)
-        cls_logit = cls_contrast(cls_embed, txt_feat)
-        bbox_dist_preds = reg_pred(img_feat)
+        cls_embed = cls_pred(img_feat) # image feature map 
+        cls_logit = cls_contrast(cls_embed, txt_feat) # cls_embed - txt_feat cosine similarity for cls_logit (class score map)
+        bbox_dist_preds = reg_pred(img_feat) 
         coeff_pred = seg_pred(img_feat)
-        if self.reg_max > 1:
+        if self.reg_max > 1: # reg_max = 16 
             bbox_dist_preds = bbox_dist_preds.reshape(
                 [-1, 4, self.reg_max, h * w]).permute(0, 3, 1, 2)
+            # (B, 4 * reg_max, H, W) -> (B, 4, reg_max, h*w) --> (B, h*w, 4, reg_max=16)
 
             # TODO: The get_flops script cannot handle the situation of
             #  matmul, and needs to be fixed later
             # bbox_preds = bbox_dist_preds.softmax(3).matmul(self.proj)
             bbox_preds = bbox_dist_preds.softmax(3).matmul(
                 self.proj.view([-1, 1])).squeeze(-1)
+            # (B, h*w, 4, reg_max=16) @ (16, 1) --> (B, h*w, 4, 1) --> (B, h*w, 4)
+            
+            # self.proj.view([-1, 1]) : (16, 1)
+            # proj = tensor([
+            #                 [0.0],
+            #                 [1.0],
+            #                 [2.0],
+            #                 [3.0],
+            #                 [4.0],
+            #                 [5.0],
+            #                 [6.0],
+            #                 [7.0],
+            #                 [8.0],
+            #                 [9.0],
+            #                 [10.0],
+            #                 [11.0],
+            #                 [12.0],
+            #                 [13.0],
+            #                 [14.0],
+            #                 [15.0]]) # shape: (16,1)
             bbox_preds = bbox_preds.transpose(1, 2).reshape(b, -1, h, w)
+            # (B, h*w, 4) --> (B, 4, h*w) --> (B, 4, h, w)
         else:
             bbox_preds = bbox_dist_preds
         if self.training:
@@ -531,8 +562,8 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                 mask_gti = batch_gt_masks[mask_match_inds]
                 mask_preds = (
                     pred_coeffs_pos @ proto_preds[bs].view(c, -1)).view(
-                        -1, mask_h, mask_w)
-                loss_mask_full = self.loss_mask(mask_preds, mask_gti)
+                        -1, mask_h, mask_w) # predicted instance masks (proto_pred * seg_pred coeff w.r.t. positive samples)
+                loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
                 _loss_mask = (self.crop_mask(loss_mask_full[None],
                                              match_boxes).mean(dim=(2, 3)) /
                               bbox_area)
