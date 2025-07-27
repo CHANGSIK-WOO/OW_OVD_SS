@@ -567,6 +567,9 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                                                       fg_mask_pre_prior[bs])
                 mask_match_inds = torch.masked_select(mask_match_inds,
                                                       fg_mask_pre_prior[bs])
+                
+                if bs == 0 :
+                    print("bbox_match_inds :", bbox_match_inds, "mask_maatch_inds", mask_match_inds)
 
                 # mask
                 mask_dim = coeff_preds[0].shape[1]
@@ -594,19 +597,20 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                 semantic_gt = torch.zeros((mask_h, mask_w), dtype=torch.long, device=mask_preds.device)
 
                 for instance_idx, gt_mask in enumerate(mask_gti):
-                    class_id = gt_labels[bs][bbox_match_inds[instance_idx]].item()
-                    print(class_id)
-                    semantic_gt[gt_mask.bool()] = class_id
-                    print(semantic_gt)
+                    class_id = int(gt_labels[bs][bbox_match_inds[instance_idx]].item())
+                    ssemantic_gt = torch.where(gt_mask.bool(),
+                                               torch.full_like(semantic_gt, class_id),
+                                               semantic_gt)
 
                 # Semantic Pred: (num_classes, H, W)
                 semantic_pred = torch.zeros((self.num_classes, mask_h, mask_w), device=mask_preds.device)
 
                 for instance_idx, pred_mask in enumerate(mask_preds):
-                    class_id = gt_labels[bs][bbox_match_inds[instance_idx]].item()
-                    print(class_id)
-                    semantic_pred[class_id] = torch.maximum(semantic_pred[class_id], pred_mask.sigmoid())
-                    print(semantic_pred)
+                    class_id = int(gt_labels[bs][bbox_match_inds[instance_idx]].item())
+                    semantic_pred = torch.where(pred_mask.sigmoid() > 0.5,
+                                                torch.full_like(semantic_pred, class_id),
+                                                semantic_pred)
+
 
                 # semantic loss
                 semantic_loss = self.loss_mask(semantic_pred[None], semantic_gt[None])
@@ -624,10 +628,10 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
             loss_bbox = flatten_pred_bboxes.sum() * 0
             loss_dfl = flatten_pred_bboxes.sum() * 0
             loss_mask = flatten_pred_coeffs.sum() * 0
+            semantic_loss = flatten_pred_coeffs.sum() * 0
         _, world_size = get_dist_info()
 
         return dict(loss_cls=loss_cls * num_imgs * world_size,
                     loss_bbox=loss_bbox * num_imgs * world_size,
                     loss_dfl=loss_dfl * num_imgs * world_size,
-                    #loss_mask=loss_mask * self.loss_mask_weight * world_size
-                    loss_mask=semantic_loss)
+                    loss_mask=(loss_mask * self.loss_mask_weight * world_size) + semantic_loss)
