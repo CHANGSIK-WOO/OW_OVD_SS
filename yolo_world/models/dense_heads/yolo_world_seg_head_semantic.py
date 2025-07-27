@@ -267,9 +267,9 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                                loss_weight=1.5 / 4),
                  mask_overlap: bool = True,
                  loss_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
-                                              use_sigmoid=True,
-                                              reduction='none'),
-                 loss_mask_weight=0.05,
+                                              use_sigmoid=False,
+                                              reduction='mean'), # None --> mean
+                 loss_mask_weight=0.1, # 0.05 --> 0.1
                  train_cfg: OptConfigType = None,
                  test_cfg: OptConfigType = None,
                  init_cfg: OptMultiConfig = None):
@@ -540,7 +540,7 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
             
             # mask loss
             # [batch, mask_channels, H, W]
-            b, c, mask_h, mask_w = proto_preds.shape
+            _, c, mask_h, mask_w = proto_preds.shape
             # batch_gt_masks : (Ex) bs = 2, image 1 : one instance / image 2 : two instance -> (3, H, W) 
             
             # GT MASK SIZE FITTING WITH SAME SIZE OF PROTO_PREDS
@@ -568,9 +568,6 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                 mask_match_inds = torch.masked_select(mask_match_inds,
                                                       fg_mask_pre_prior[bs])
                 
-                if bs == 0 :
-                    print("bbox_match_inds :", bbox_match_inds, "mask_maatch_inds", mask_match_inds)
-
                 # mask
                 mask_dim = coeff_preds[0].shape[1]
                 prior_mask_mask = fg_mask_pre_prior[bs].unsqueeze(-1).repeat(
@@ -592,47 +589,20 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                     pred_coeffs_pos @ proto_preds[bs].view(c, -1)).view(
                         -1, mask_h, mask_w) # predicted instance masks (proto_pred * seg_pred coeff w.r.t. positive samples)
                 
-                #2025.07.27 REVISION
-                # Semantic GT: (H, W)
-                semantic_gt = torch.zeros((mask_h, mask_w), dtype=torch.long, device=mask_preds.device)
+                loss_mask_full = self.loss_mask(mask_preds, mask_gti) # loss_mask_full shape: (N_inst, mask_h, mask_w)
+                _loss_mask = (self.crop_mask(loss_mask_full[None],
+                                             match_boxes).mean(dim=(2, 3)) /
+                              bbox_area)
 
-                for instance_idx, gt_mask in enumerate(mask_gti):
-                    class_id = int(gt_labels[bs][bbox_match_inds[instance_idx]].item())
-                    ssemantic_gt = torch.where(gt_mask.bool(),
-                                               torch.full_like(semantic_gt, class_id),
-                                               semantic_gt)
-
-                # Semantic Pred: (num_classes, H, W)
-                semantic_pred = torch.zeros((self.num_classes, mask_h, mask_w), device=mask_preds.device)
-
-                for instance_idx, pred_mask in enumerate(mask_preds):
-                    class_id = int(gt_labels[bs][bbox_match_inds[instance_idx]].item())
-                    semantic_pred = torch.where(pred_mask.sigmoid() > 0.5,
-                                                torch.full_like(semantic_pred, class_id),
-                                                semantic_pred)
-
-
-                # semantic loss
-                semantic_loss = self.loss_mask(semantic_pred[None], semantic_gt[None])
-
-
-                
-                # loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
-                # _loss_mask = (self.crop_mask(loss_mask_full[None],
-                #                              match_boxes).mean(dim=(2, 3)) /
-                #               bbox_area)
-
-                # loss_mask += _loss_mask.mean()
+                loss_mask += _loss_mask.mean()
 
         else:
             loss_bbox = flatten_pred_bboxes.sum() * 0
             loss_dfl = flatten_pred_bboxes.sum() * 0
             loss_mask = flatten_pred_coeffs.sum() * 0
-            semantic_loss = flatten_pred_coeffs.sum() * 0
         _, world_size = get_dist_info()
 
         return dict(loss_cls=loss_cls * num_imgs * world_size,
                     loss_bbox=loss_bbox * num_imgs * world_size,
-                    loss_dfl=loss_dfl * num_imgs * world_size,  
-                    #loss_mask=(loss_mask * self.loss_mask_weight * world_size) + semantic_loss
-                    loss_mask = semantic_loss)
+                    loss_dfl=loss_dfl * num_imgs * world_size,
+                    loss_mask=loss_mask * self.loss_mask_weight * world_size)

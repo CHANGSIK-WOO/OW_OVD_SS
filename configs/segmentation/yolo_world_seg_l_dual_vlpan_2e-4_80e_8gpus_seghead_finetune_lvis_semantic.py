@@ -60,7 +60,7 @@ model = dict(
                    mask_overlap=mask_overlap,
                    loss_mask=dict(type='mmdet.CrossEntropyLoss',
                                   use_sigmoid=False, # previously True --> False for semantic segmentation
-                                  reduction='none'),
+                                  reduction='mean'),
                    loss_mask_weight=1.0),
     train_cfg=dict(
         assigner=dict(type='YOLOWorldSegAssigner',
