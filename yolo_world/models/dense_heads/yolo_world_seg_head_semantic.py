@@ -617,12 +617,12 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
 
 
                 
-                loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
-                _loss_mask = (self.crop_mask(loss_mask_full[None],
-                                             match_boxes).mean(dim=(2, 3)) /
-                              bbox_area)
+                # loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
+                # _loss_mask = (self.crop_mask(loss_mask_full[None],
+                #                              match_boxes).mean(dim=(2, 3)) /
+                #               bbox_area)
 
-                loss_mask += _loss_mask.mean()
+                # loss_mask += _loss_mask.mean()
 
         else:
             loss_bbox = flatten_pred_bboxes.sum() * 0
@@ -633,5 +633,6 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
 
         return dict(loss_cls=loss_cls * num_imgs * world_size,
                     loss_bbox=loss_bbox * num_imgs * world_size,
-                    loss_dfl=loss_dfl * num_imgs * world_size,
-                    loss_mask=(loss_mask * self.loss_mask_weight * world_size) + semantic_loss)
+                    loss_dfl=loss_dfl * num_imgs * world_size,  
+                    #loss_mask=(loss_mask * self.loss_mask_weight * world_size) + semantic_loss
+                    loss_mask = semantic_loss)
