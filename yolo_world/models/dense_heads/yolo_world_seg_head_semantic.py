@@ -27,7 +27,7 @@ from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
 
 @MODELS.register_module()
-class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
+class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
                  *args,
                  embed_dims: int, 
@@ -44,9 +44,11 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
         self.freeze_all = freeze_all
         self.use_bn_head = use_bn_head
         super().__init__(*args, **kwargs)
+        print("[DEBUG] YOLOWorldSegHeadModule_Initialize")
 
     def init_weights(self, prior_prob=0.01):
         """Initialize the weight and bias of PPYOLOE head."""
+        print("[DEBUG] YOLOWorldSegHeadModule_initialize weights")
         super().init_weights()
         for cls_pred, cls_contrast, stride in zip(self.cls_preds,
                                                   self.cls_contrasts,
@@ -55,10 +57,11 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
             if hasattr(cls_contrast, 'bias'):
                 nn.init.constant_(
                     cls_contrast.bias.data,
-                    math.log(5 / self.num_classes / (640 / stride)**2))
+                    math.log(5 / self.num_classes / (640 / stride)**2))      
 
     def _init_layers(self) -> None:
         """initialize conv layers in YOLOv8 head."""
+        print("[DEBUG] YOLOWorldSegHeadModule_Initialize Layers")
         # Init decouple head
         self.cls_preds = nn.ModuleList()
         self.reg_preds = nn.ModuleList()
@@ -146,7 +149,7 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
                     BNContrastiveHead(self.embed_dims, self.norm_cfg))
             else:
                 self.cls_contrasts.append(ContrastiveHead(self.embed_dims)) #initialization of contrastive head
-
+            
         # tensor([0.0, 1.0, 2.0, ..., 15.0]). shape (16, )
         proj = torch.arange(self.reg_max, dtype=torch.float)
         
@@ -161,7 +164,11 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
         if self.freeze_bbox or self.freeze_bbox:
             self._freeze_all()
 
+        
+
+
     def _freeze_all(self):
+        print("[DEBUG] YOLOWorldSegHeadModule_freeze all")
         frozen_list = [self.cls_preds, self.reg_preds, self.cls_contrasts]
         if self.freeze_all:
             frozen_list.extend([self.proto_pred, self.seg_preds])
@@ -176,12 +183,14 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
         """Convert the model into training mode while keep normalization layer
         frozen."""
         super().train(mode)
+        print("[DEBUG] YOLOWorldSegHeadModule_train")
         if self.freeze_bbox or self.freeze_all:
             self._freeze_all()
 
     def forward(self, img_feats: Tuple[Tensor],
                 txt_feats: Tensor) -> Tuple[List]:
         """Forward features from the upstream network."""
+        print("[DEBUG] YOLOWorldSegHeadModule_forward")
         assert len(img_feats) == self.num_levels
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         mask_protos = self.proto_pred(img_feats[0])
@@ -198,6 +207,7 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
                        cls_contrast: nn.ModuleList,
                        seg_pred: nn.ModuleList) -> Tuple:
         """Forward feature of a single scale level."""
+        print("[DEBUG] YOLOWorldSegHeadModule_forward_single :")
         b, _, h, w = img_feat.shape
         cls_embed = cls_pred(img_feat) # image feature map 
         cls_logit = cls_contrast(cls_embed, txt_feat) # cls_embed - txt_feat cosine similarity for cls_logit (class score map)
@@ -244,7 +254,7 @@ class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
 
 
 @MODELS.register_module()
-class YOLOWorldSemanticSegHead(YOLOv5InsHead):
+class YOLOWorldSegHead(YOLOv5InsHead):
     def __init__(self,
                  head_module: ConfigType,
                  prior_generator: ConfigType = dict(
@@ -267,12 +277,13 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                                loss_weight=1.5 / 4),
                  mask_overlap: bool = True,
                  loss_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
-                                              use_sigmoid=False,
-                                              reduction='mean'), # None --> mean
-                 loss_mask_weight=0.1, # 0.05 --> 0.1
+                                              use_sigmoid=True,
+                                              reduction='none'),
+                 loss_mask_weight=0.05,
                  train_cfg: OptConfigType = None,
                  test_cfg: OptConfigType = None,
                  init_cfg: OptMultiConfig = None):
+        print("[DEBUG] YOLOWorldSegHead_Initialize")                 
         super().__init__(head_module=head_module,
                          prior_generator=prior_generator,
                          bbox_coder=bbox_coder,
@@ -293,9 +304,10 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
 
         The special_init function is designed to deal with this situation.
         """
+        print("[DEBUG] YOLOWorldSegHead_special_init")   
         if self.train_cfg:
             self.assigner = TASK_UTILS.build(self.train_cfg.assigner)
-            print(f"[DEBUG] Assigner class: {self.assigner.__class__.__name__}")
+            print(f"[DEBUG] YOLOWorldSegHead_Assigner class: {self.assigner.__class__.__name__}")
             # Add common attributes to reduce calculation
             self.featmap_sizes_train = None
             self.num_level_priors = None
@@ -309,17 +321,14 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
         """Perform forward propagation and loss calculation of the detection
         head on the features of the upstream network."""
 
-        outs = self(img_feats, txt_feats) # forward
-        # self(img_feats, txt_feats) = self.head_module(img_feats, txt_feats) --> (cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, proto_preds)
+        print("[DEBUG] YOLOWorldSegHead_loss")   
+        outs = self(img_feats, txt_feats)
         # Fast version
-        # concatenation = (cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos) + (batch_data_samples['bboxes_labels'],batch_data_samples['masks'],batch_data_samples['img_metas'])
-        #               = (cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, batch_data_samples['bboxes_labels'],batch_data_samples['masks'],batch_data_samples['img_metas'])
-                              
         loss_inputs = outs + (batch_data_samples['bboxes_labels'],
                               batch_data_samples['masks'],
-                              batch_data_samples['img_metas']) 
+                              batch_data_samples['img_metas'])
         losses = self.loss_by_feat(*loss_inputs)
-
+        
         return losses
 
     def loss_and_predict(
@@ -332,6 +341,7 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
         """Perform forward propagation of the head, then calculate loss and
         predictions from the features and data samples.
         """
+        print("[DEBUG] YOLOWorldSegHead_loss_and_predict")   
         outputs = unpack_gt_instances(batch_data_samples)
         (batch_gt_instances, batch_gt_instances_ignore,
          batch_img_metas) = outputs
@@ -350,6 +360,7 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
     def forward(self, img_feats: Tuple[Tensor],
                 txt_feats: Tensor) -> Tuple[List]:
         """Forward features from the upstream network."""
+        print("[DEBUG] YOLOWorldSegHead_forward")   
         return self.head_module(img_feats, txt_feats)
 
     def predict(self,
@@ -360,6 +371,7 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
         """Perform forward propagation of the detection head and predict
         detection results on the features of the upstream network.
         """
+        print("[DEBUG] YOLOWorldSegHead_predict")   
         batch_img_metas = [
             data_samples.metainfo for data_samples in batch_data_samples
         ]
@@ -376,6 +388,7 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                  with_ori_nms=False,
                  **kwargs):
         """Test function with test time augmentation."""
+        print("[DEBUG] YOLOWorldSegHead_aug_test")   
         raise NotImplementedError('aug_test is not implemented yet.')
 
     def loss_by_feat(
@@ -413,18 +426,25 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
         Returns:
             dict[str, Tensor]: A dictionary of losses.
         """
-        num_imgs = len(batch_img_metas) # num_imgs: batch size
+        print("[DEBUG] YOLOWorldSegHead_loss_by_feat")
+        num_imgs = len(batch_img_metas) 
+        
+        print("[DEBUG] num_imgs :", num_imgs) # num_imgs = 8 = train_batch_size_per_gpu
+        print("[DEBUG] batch_gt_instances :", batch_gt_instances.shape) # torch.Size([145, 6]) : totally 145 instances in 8 images
+        print("[DEBUG] batch_gt_instances :", batch_gt_instances[0]) # tensor([0.0000, 3.0000, 358.9809, 217.5853, 419.2203, 320.5395] : [img_idx, class_id, x1, y1, x2, y2]
+        print("[DEBUG] batch_gt_masks :", batch_gt_masks.shape) # torch.Size([145, 160, 160]) : totally 145 instances' boolean mask (size : 160 * 160) (True : corresponding instances, False : backgrounds)
+        print("[DEBUG] batch_gt_instances :", batch_gt_masks[0]) 
+        print("[DEBUG] batch_img_metas :", batch_img_metas) #[{'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}, {'batch_input_shape': torch.Size([640, 640])}]        
+        print("[DEBUG] batch_gt_instances_ignore :", batch_gt_instances_ignore) #batch_gt_instances_ignore : None   
 
-        # feature level-wise size (H, W)
         current_featmap_sizes = [
             cls_score.shape[2:] for cls_score in cls_scores
-        ] 
-
+        ]
+        print("[DEBUG] current_featmap_sizes :", current_featmap_sizes) # current_featmap_sizes : [torch.Size([80, 80]), torch.Size([40, 40]), torch.Size([20, 20])]
         # If the shape does not equal, generate new one
         if current_featmap_sizes != self.featmap_sizes_train:
             self.featmap_sizes_train = current_featmap_sizes
 
-            # GENERATE PRIOR(ANCHOR)
             mlvl_priors_with_stride = self.prior_generator.grid_priors(
                 self.featmap_sizes_train,
                 dtype=cls_scores[0].dtype,
@@ -432,30 +452,48 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                 with_stride=True)
 
             self.num_level_priors = [len(n) for n in mlvl_priors_with_stride]
-            self.flatten_priors_train = torch.cat(mlvl_priors_with_stride, dim=0)
+            self.flatten_priors_train = torch.cat(mlvl_priors_with_stride,
+                                                  dim=0)
             self.stride_tensor = self.flatten_priors_train[..., [2]]
 
         # gt info
-        gt_info = gt_instances_preprocess(batch_gt_instances, num_imgs) # (B, max_gt, info)
-        gt_labels = gt_info[:, :, :1] # CLASS LABEL 
-        gt_bboxes = gt_info[:, :, 1:]  # BBOX COORDINATE (XXYY)
+        gt_info = gt_instances_preprocess(batch_gt_instances, num_imgs)
+        print("[DEBUG] gt_info :", gt_info.shape) # torch.Size([8, 42, 5]) : 8images in batch, maximum 42 gt instances per image, 5 info (class_id, x1, y1, x2, y2)
+        print("[DEBUG] gt_info :", gt_info[0])
+        gt_labels = gt_info[:, :, :1]
+        print("[DEBUG] gt_labels :", gt_labels.shape) # torch.Size([8, 42, 1])
+        print("[DEBUG] gt_labels :", gt_labels[0]) # class_id 
+        gt_bboxes = gt_info[:, :, 1:]  # xyxy
+        print("[DEBUG] gt_bboxes :", gt_bboxes.shape) # torch.Size([8, 42, 4])
+        print("[DEBUG] gt_bboxes :", gt_bboxes[0]) 
+
         pad_bbox_flag = (gt_bboxes.sum(-1, keepdim=True) > 0).float()
+        print("[DEBUG] pad_bbox_flag :", pad_bbox_flag.shape) # pad_bbox_flag : torch.Size([8, 42, 1])
+        print("[DEBUG] pad_bbox_flag :", pad_bbox_flag[0]) # 1 = GT, 0 = PADDING(NO GT)
 
         # pred info
         flatten_cls_preds = [
             cls_pred.permute(0, 2, 3, 1).reshape(num_imgs, -1,
                                                  self.num_classes)
             for cls_pred in cls_scores
-        ]
+        ] 
+        print("[DEBUG] flatten_cls_preds :", flatten_cls_preds[0].shape) #torch.Size([8, 6400, 80]) : 8IMAGES IN BATCH, 6400 GRID CELLS PER IMAGE, LOGITS ABOUT 80CLASSES
+        print("[DEBUG] flatten_cls_preds :", flatten_cls_preds[0])
         flatten_pred_bboxes = [
             bbox_pred.permute(0, 2, 3, 1).reshape(num_imgs, -1, 4)
             for bbox_pred in bbox_preds
         ]
+        print("[DEBUG] flatten_pred_bboxes :", flatten_pred_bboxes[0].shape) # torch.Size([8, 6400, 4]) : 8IMAGES IN BATCH, 6400 GRID CELLS PER IMAGE, BBOX PER GRID CELL
+        print("[DEBUG] flatten_pred_bboxes :", flatten_pred_bboxes[0])
+        
         # (bs, n, 4 * reg_max)
         flatten_pred_dists = [
             bbox_pred_org.reshape(num_imgs, -1, self.head_module.reg_max * 4)
             for bbox_pred_org in bbox_dist_preds
         ]
+        print("[DEBUG] flatten_pred_dists :", flatten_pred_dists[0].shape) #  torch.Size([8, 6400, 64])
+        print("[DEBUG] flatten_pred_dists :", flatten_pred_dists[0])
+
 
         flatten_pred_coeffs = [
             coeff_pred.permute(0, 2, 3,
@@ -463,55 +501,87 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                                           self.head_module.mask_channels)
             for coeff_pred in coeff_preds
         ]
+        print("[DEBUG] flatten_pred_coeffs :", flatten_pred_coeffs[0].shape) # torch.Size([8, 6400, 32]) : 32 MASK COEFFICIENT DIM (MASK CHANNELS)
+        print("[DEBUG] flatten_pred_coeffs :", flatten_pred_coeffs[0])
 
-        flatten_dist_preds = torch.cat(flatten_pred_dists, dim=1)
-        flatten_cls_preds = torch.cat(flatten_cls_preds, dim=1)
-        flatten_pred_bboxes = torch.cat(flatten_pred_bboxes, dim=1)
+
+        flatten_dist_preds = torch.cat(flatten_pred_dists, dim=1) # flatten_dist_preds : (8, 8400, 64) : 8400 = (80*80) + (40*40) + (20*20) 
+        print("[DEBUG] after cat flatten_dist_preds :", flatten_dist_preds.shape)
+        print("[DEBUG] after cat flatten_dist_preds :", flatten_dist_preds[0])
+
+        flatten_cls_preds = torch.cat(flatten_cls_preds, dim=1) # flatten_cls_preds  : (8, 8400, 80)
+        print("[DEBUG] after cat flatten_cls_preds :", flatten_cls_preds.shape)
+        print("[DEBUG] after cat flatten_cls_preds :", flatten_cls_preds[0])
+
+        flatten_pred_bboxes = torch.cat(flatten_pred_bboxes, dim=1) # flatten_pred_bboxes: (8, 8400, 4)
+        print("[DEBUG] after cat flatten_pred_bboxes :", flatten_pred_bboxes.shape)
+        print("[DEBUG] after cat flatten_pred_bboxes :", flatten_pred_bboxes[0])
+
+
         flatten_pred_bboxes = self.bbox_coder.decode(
             self.flatten_priors_train[..., :2], flatten_pred_bboxes,
             self.stride_tensor[..., 0])
-        flatten_pred_coeffs = torch.cat(flatten_pred_coeffs, dim=1)
+        print("[DEBUG] after decoding flatten_pred_bboxes :", flatten_pred_bboxes.shape)
+        print("[DEBUG] after decoding flatten_pred_bboxes :", flatten_pred_bboxes[0])        
+
+        flatten_pred_coeffs = torch.cat(flatten_pred_coeffs, dim=1) #flatten_pred_coeffs: (8, 8400, 32)
+        print("[DEBUG] after cat flatten_pred_coeffs :", flatten_pred_coeffs.shape)
+        print("[DEBUG] after cat flatten_pred_coeffs :", flatten_pred_coeffs[0])
+
+
 
         assigned_result = self.assigner(
             (flatten_pred_bboxes.detach()).type(gt_bboxes.dtype),
             flatten_cls_preds.detach().sigmoid(), self.flatten_priors_train,
             gt_labels, gt_bboxes, pad_bbox_flag)
 
-        assigned_bboxes = assigned_result['assigned_bboxes']
-        assigned_scores = assigned_result['assigned_scores']
-        fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
-        assigned_gt_idxs = assigned_result['assigned_gt_idxs']
+        assigned_bboxes = assigned_result['assigned_bboxes'] # torch.Size([8, 8400, 4])
+        print("[DEBUG] assigned_bboxes :", assigned_bboxes.shape)
+        print("[DEBUG] assigned_bboxes :", assigned_bboxes[0])
 
-        #CLASS LOSS (CLASS CLASSFICATAION LOSS)
-        #assigned_scores.sum() = summation of total positive priors' weight
-        #.clamp(min=1) : make 1 if no positive priors to prevent denominator making 0
+
+        assigned_scores = assigned_result['assigned_scores'] # torch.Size([8, 8400, 80])
+        print("[DEBUG] assigned_scores :", assigned_scores.shape)
+        print("[DEBUG] assigned_scores :", assigned_scores[0])
+
+
+        fg_mask_pre_prior = assigned_result['fg_mask_pre_prior'] # torch.Size([8, 8400])
+        print("[DEBUG] fg_mask_pre_prior :", fg_mask_pre_prior.shape)
+        print("[DEBUG] fg_mask_pre_prior :", fg_mask_pre_prior[0])
+
+
+        assigned_gt_idxs = assigned_result['assigned_gt_idxs'] # torch.Size([8, 8400])
+        print("[DEBUG] assigned_gt_idxs :", assigned_gt_idxs.shape)
+        print("[DEBUG] assigned_gt_idxs :", assigned_gt_idxs[0])
+
+
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
+        print("[DEBUG] assigned_scores_sum :", assigned_scores_sum)        
+        
 
-        #flatten_cls_preds (num_priors, num_classes)
-        #assigned_score (num_priors, num_classes)
-        #prior-wise class loss calculation and summation 
         loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()
+        print("[DEBUG] loss_cls :", loss_cls)                
+        loss_cls /= assigned_scores_sum
+        print("[DEBUG] afterloss_cls :", loss_cls)                
 
-        #normalization
-        loss_cls /= assigned_scores_sum 
 
         # rescale bbox
-        assigned_bboxes /= self.stride_tensor
-        flatten_pred_bboxes /= self.stride_tensor
+        assigned_bboxes /= self.stride_tensor #  torch.Size([8, 8400, 4])
+        print("[DEBUG] assigned_bboxes :", assigned_bboxes.shape)                
+        print("[DEBUG] assigned_bboxes :", assigned_bboxes[0])        
+        flatten_pred_bboxes /= self.stride_tensor #  torch.Size([8, 8400, 4])
+        print("[DEBUG] flatten_pred_bboxes :", flatten_pred_bboxes.shape)                
+        print("[DEBUG] flatten_pred_bboxes :", flatten_pred_bboxes[0])                        
 
         # select positive samples mask
         num_pos = fg_mask_pre_prior.sum()
+        print("[DEBUG] num_pos :", num_pos) # tensor(1057, device='cuda:0')
+   
         if num_pos > 0:
             # when num_pos > 0, assigned_scores_sum will >0, so the loss_bbox
             # will not report an error
-
-            # bbox(iou) loss
-
-            # (B, num_priors) -> unsqueeze(-1) (B, num_priors, 1) -> (B, num_priors, 4)
+            # iou loss
             prior_bbox_mask = fg_mask_pre_prior.unsqueeze(-1).repeat([1, 1, 4])
-            #torch.masked_select(input, mask) 
-            #input : input tensor, mask : boolean tensor, output : 1d tensor chosen
-
             pred_bboxes_pos = torch.masked_select(
                 flatten_pred_bboxes, prior_bbox_mask).reshape([-1, 4])
             assigned_bboxes_pos = torch.masked_select(
@@ -537,13 +607,8 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                                      weight=bbox_weight.expand(-1,
                                                                4).reshape(-1),
                                      avg_factor=assigned_scores_sum)
-            
-            # mask loss
-            # [batch, mask_channels, H, W]
+
             _, c, mask_h, mask_w = proto_preds.shape
-            # batch_gt_masks : (Ex) bs = 2, image 1 : one instance / image 2 : two instance -> (3, H, W) 
-            
-            # GT MASK SIZE FITTING WITH SAME SIZE OF PROTO_PREDS
             if batch_gt_masks.shape[-2:] != (mask_h, mask_w):
                 batch_gt_masks = F.interpolate(batch_gt_masks[None],
                                                (mask_h, mask_w),
@@ -558,26 +623,49 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
             batch_inds[1:] = box_sum_flag.cumsum(dim=0)[:-1][..., None]
             _assigned_gt_idxs = assigned_gt_idxs + batch_inds
 
+
             for bs in range(num_imgs):
+                print("[DEBUG] bs :", bs)                
                 # 8400
                 bbox_match_inds = assigned_gt_idxs[bs]
+                print("[DEBUG] bbox_match_inds :", bbox_match_inds.shape) 
+                print("[DEBUG] bbox_match_inds :", bbox_match_inds)                
+                               
                 mask_match_inds = _assigned_gt_idxs[bs]
+                print("[DEBUG] mask_match_inds :", mask_match_inds.shape)                
+                print("[DEBUG] mask_match_inds :", mask_match_inds)                                
 
                 bbox_match_inds = torch.masked_select(bbox_match_inds,
                                                       fg_mask_pre_prior[bs])
+                print("[DEBUG] bbox_match_inds :", bbox_match_inds.shape)
+                print("[DEBUG] bbox_match_inds :", bbox_match_inds)                
+                                
+
                 mask_match_inds = torch.masked_select(mask_match_inds,
                                                       fg_mask_pre_prior[bs])
-                
+                print("[DEBUG] mask_match_inds :", mask_match_inds.shape)                
+                print("[DEBUG] mask_match_inds :", mask_match_inds)                                
+
+
                 # mask
                 mask_dim = coeff_preds[0].shape[1]
+                print("[DEBUG] coeff_preds[0] :", coeff_preds[0])                
+                print("[DEBUG] mask_dim :", mask_dim)                
+                
                 prior_mask_mask = fg_mask_pre_prior[bs].unsqueeze(-1).repeat(
                     [1, mask_dim])
+                print("[DEBUG] fg_mask_pre_prior[bs] :", fg_mask_pre_prior[bs].shape)  
+                print("[DEBUG] fg_mask_pre_prior[bs].unsqueeze(-1) :", fg_mask_pre_prior[bs].unsqueeze(-1).shape)                            
+                print("[DEBUG] fg_mask_pre_prior[bs].unsqueeze(-1).repeat([1, mask_dim]) :", fg_mask_pre_prior[bs].unsqueeze(-1).repeat([1, mask_dim]).shape)                                            
+                print("[DEBUG] prior_mask_mask :", prior_mask_mask)     
                 pred_coeffs_pos = torch.masked_select(flatten_pred_coeffs[bs],
                                                       prior_mask_mask).reshape(
                                                           [-1, mask_dim])
+                print("[DEBUG] pred_coeffs_pos :", pred_coeffs_pos.shape)                                                           
 
                 match_boxes = gt_bboxes[bs][bbox_match_inds] / 4
                 normed_boxes = gt_bboxes[bs][bbox_match_inds] / 640
+                print("[DEBUG] gt_bboxes[bs] :", gt_bboxes[bs].shape)
 
                 bbox_area = (normed_boxes[:, 2:] -
                              normed_boxes[:, :2]).prod(dim=1)
@@ -585,22 +673,27 @@ class YOLOWorldSemanticSegHead(YOLOv5InsHead):
                     continue
                 assert not self.mask_overlap
                 mask_gti = batch_gt_masks[mask_match_inds]
+                print("[DEBUG] mask_gti :", mask_gti.shape)
                 mask_preds = (
                     pred_coeffs_pos @ proto_preds[bs].view(c, -1)).view(
                         -1, mask_h, mask_w) # predicted instance masks (proto_pred * seg_pred coeff w.r.t. positive samples)
-                
-                loss_mask_full = self.loss_mask(mask_preds, mask_gti) # loss_mask_full shape: (N_inst, mask_h, mask_w)
+                print("[DEBUG] mask_preds :", mask_preds.shape)                        
+                loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
+                print("[DEBUG] loss_mask_full :", loss_mask_full.shape)  
                 _loss_mask = (self.crop_mask(loss_mask_full[None],
                                              match_boxes).mean(dim=(2, 3)) /
                               bbox_area)
-
-                loss_mask += _loss_mask.mean()
+                print("[DEBUG] before loss_mask :", loss_mask.shape) 
+                loss_mask += _loss_mask.mean()                
+                print("[DEBUG] _loss_mask.mean() :", _loss_mask.mean().shape)  
+                print("[DEBUG] after loss_mask :", loss_mask.shape) 
 
         else:
             loss_bbox = flatten_pred_bboxes.sum() * 0
             loss_dfl = flatten_pred_bboxes.sum() * 0
             loss_mask = flatten_pred_coeffs.sum() * 0
         _, world_size = get_dist_info()
+        print("[DEBUG] finish calculating loss by feat") 
 
         return dict(loss_cls=loss_cls * num_imgs * world_size,
                     loss_bbox=loss_bbox * num_imgs * world_size,
