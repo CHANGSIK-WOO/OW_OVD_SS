@@ -27,7 +27,7 @@ from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
 
 @MODELS.register_module()
-class YOLOWorldSegHeadModule(YOLOv8HeadModule):
+class YOLOWorldSemanticSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
                  *args,
                  embed_dims: int, 
@@ -254,7 +254,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
 
 
 @MODELS.register_module()
-class YOLOWorldSegHead(YOLOv5InsHead):
+class YOLOWorldSemanticSegHead(YOLOv5InsHead):
     def __init__(self,
                  head_module: ConfigType,
                  prior_generator: ConfigType = dict(
