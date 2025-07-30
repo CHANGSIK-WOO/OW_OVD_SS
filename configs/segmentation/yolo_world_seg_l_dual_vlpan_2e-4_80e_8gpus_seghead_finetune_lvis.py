@@ -5,9 +5,9 @@ custom_imports = dict(imports=['yolo_world'], allow_failed_imports=False)
 # hyper-parameters
 num_classes = 1203
 num_training_classes = 80
-max_epochs = 2 # Maximum training epochs
+max_epochs = 1 # Maximum training epochs
 close_mosaic_epochs = 10
-save_epoch_intervals = 2
+save_epoch_intervals = 1
 text_channels = 512
 neck_embed_channels = [128, 256, _base_.last_stage_out_channels // 2]
 neck_num_heads = [4, 8, _base_.last_stage_out_channels // 2 // 32]
@@ -153,7 +153,7 @@ coco_train_dataset = dict(
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
                  data_root='../drive/MyDrive/data/coco/', #data_root='data/coco', 
-                 ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_train_base.json',
+                 ann_file='lvis_v1_train.json', #ann_file='lvis/lvis_v1_train_base.json',
                  data_prefix=dict(img=''),
                  filter_cfg=dict(filter_empty_gt=True, min_size=32)),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/texts/lvis_v1_base_class_texts.json',
@@ -228,7 +228,7 @@ coco_val_dataset = dict(
     dataset=dict(type='YOLOv5LVISV1Dataset',
                  data_root='../drive/MyDrive/data/coco/', #data_root='data/coco/',
                  test_mode=True,
-                 ann_file='lvis_v1_image_info_test_dev.json', #ann_file='lvis/lvis_v1_val.json',
+                 ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
                  data_prefix=dict(img=''),
                  batch_shapes_cfg=None),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
@@ -237,7 +237,7 @@ val_dataloader = dict(dataset=coco_val_dataset)
 test_dataloader = val_dataloader
 
 val_evaluator = dict(type='mmdet.LVISMetric',
-                     ann_file='../drive/MyDrive/data/coco/lvis_v1_image_info_test_dev.json',
+                     ann_file='../drive/MyDrive/data/coco/lvis_v1_val.json',
                      metric=['bbox', 'segm'])
 test_evaluator = val_evaluator
 find_unused_parameters = True
