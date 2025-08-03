@@ -27,7 +27,7 @@ from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
 
 @MODELS.register_module()
-class YOLOWorldSegHeadModule(YOLOv8HeadModule):
+class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
                  *args,
                  embed_dims: int, 
@@ -278,7 +278,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
 
 
 @MODELS.register_module()
-class YOLOWorldSegHead(YOLOv5InsHead):
+class YOLOWorldSemSegHead(YOLOv5InsHead):
     def __init__(self,
                  head_module: ConfigType,
                  prior_generator: ConfigType = dict(
@@ -645,14 +645,12 @@ class YOLOWorldSegHead(YOLOv5InsHead):
             
             for b in range(B):
                 gt_instances = batch_gt_instances[b]
-                masks = gt_instances.masks.to_tensor(dtype=torch.bool
+                masks = gt_instances.masks.to_tensor(dtype=torch.bool,
                                                      device=semantic_logits.device)
                 labels = gt_instances.labels
 
                 for m, l in zip(masks, labels):
-                    if m.any():
-                        # Get the mask for the current instance
-                        semantic_gt[b][m] = l
+                    semantic_gt[b][m] = l
             
             if semantic_gt.shape[-2:] != semantic_logits.shape[-2:]:
                 semantic_gt = F.interpolate(semantic_gt.unsqueeze(1).float(),
