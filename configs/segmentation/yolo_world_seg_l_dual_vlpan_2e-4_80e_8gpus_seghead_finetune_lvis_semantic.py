@@ -61,7 +61,8 @@ model = dict(
                    loss_mask=dict(type='mmdet.CrossEntropyLoss',
                                   use_sigmoid=False, # previously True --> False for semantic segmentation
                                   reduction='mean'),
-                   #loss_mask_weight=1.0),
+                   #loss_mask_weight=1.0
+                   ),
     train_cfg=dict(
         assigner=dict(type='YOLOWorldSegAssigner',
                       num_classes=num_training_classes)),
