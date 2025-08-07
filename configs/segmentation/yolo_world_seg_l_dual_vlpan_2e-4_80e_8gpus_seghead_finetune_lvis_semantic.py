@@ -161,6 +161,7 @@ coco_train_dataset = dict(
     pipeline=train_pipeline)
 train_dataloader = dict(persistent_workers=persistent_workers,
                         batch_size=train_batch_size_per_gpu,
+                        num_workers=0,
                         collate_fn=dict(type='yolow_collate'),
                         dataset=coco_train_dataset)
 
