@@ -20,10 +20,10 @@ def yolow_collate(data_batch: Sequence,
 
     #2025.08.08 ==================================================
     # If data_batch[i] is None, skip it
-    data_batch = [db for db in data_batch if db is not None]
+    # data_batch = [db for db in data_batch if db is not None]
 
-    if len(data_batch) == 0:
-        return None
+    # if len(data_batch) == 0:
+    #     return None
     # =============================================================
     for i in range(len(data_batch)):        
         
