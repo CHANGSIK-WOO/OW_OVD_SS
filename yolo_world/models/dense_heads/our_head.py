@@ -319,12 +319,12 @@ class OurHead(YOLOv8Head):
         self.att_embeddings = torch.nn.Parameter(atts['att_embedding'].float()[prev_atts_num:])
         # self.att_embeddings = torch.nn.Parameter(torch.zeros(1000, 512).float())
         
-    def reset_log(self, intetval=0.0001):
+    def reset_log(self, interval=0.0001):
         """Reset the log."""
         # [0, 1] interval = 0.0001
-        self.positive_distributions = [{att_i: torch.zeros(int((1)/intetval)).to(self.device)
+        self.positive_distributions = [{att_i: torch.zeros(int((1)/interval)).to(self.device)
                                     for att_i in range(self.att_embeddings.shape[0])} for _ in self.thrs]
-        self.negative_distributions=  [{att_i: torch.zeros(int((1)/intetval)).to(self.device) 
+        self.negative_distributions=  [{att_i: torch.zeros(int((1)/interval)).to(self.device) 
                                       for att_i in range(self.att_embeddings.shape[0])} for _ in self.thrs]
         
     """YOLO World v8 head."""
@@ -460,19 +460,19 @@ class OurHead(YOLOv8Head):
             known_logits = known_logits.sigmoid().permute(0, 2, 3, 1)
             unknown_logits = unknown_logits.sigmoid().permute(0, 2, 3, 1)
 
-            # 溫←츞藥꿰윥映삣닽�쉪訝띸‘若싨��
+            # 溫←츞藥꿰윥?��?��?���쉪訝띸??�若?����
             uncertainty = self.calculate_uncertainty(known_logits)
             # uncertainty = 0
-            # 溫←츞掠욄�㏛툖簾�若싨�㎩뭉瘟껅빐掠욄�㎪쓢�뇥
+            # 溫←츞掠?���㏛?���?�若?���㎩뭉瘟껅빐掠욄�㎪?���뇥
             # top_k_att_score = self.select_top_k_attributes(unknown_logits, k=self.top_k)
             top_k_att_score = self.compute_weighted_top_k_attributes(unknown_logits, k=self.top_k)
             #top_k_att_score = unknown_logits.max(dim=-1, keepdim=True)[0]
-            # �엻�릦藥꿰윥�뭽�쑋�윥映삣닽�쉪窯꾣탩
+            # �엻�릦?��꿰윥��?��?���윥?��?��?���쉪�?꾣탩
             
             unknown_logits_final = (top_k_att_score + uncertainty) / 2 * (1 - known_logits.max(-1, keepdim=True)[0])
             # unknown_logits_final = (top_k_att_score) * (1 - known_logits.max(-1, keepdim=True)[0])
             
-            # �릦亮뜹럴�윥�뭽�쑋�윥映삣닽�쉪���瀯덆쥋役뗧퍜�옖
+            # �릦亮뜹?���윥��?��?���윥?��?��?���쉪����???��쥋役?��?���옖
             logits = torch.cat([known_logits, unknown_logits_final], dim=-1).permute(0, 3, 1, 2)
             ret_logits.append(logits)
         

@@ -69,7 +69,7 @@ model = dict(
     test_cfg=dict(mask_thr_binary=0.5, fast_test=True))
 
 pre_transform = [
-    dict(type='LoadImageFromFile', backend_args=_base_.backend_args),
+    dict(type='LoadImageFromFile', ignore_empty = True, backend_args=_base_.backend_args),
     dict(type='LoadAnnotations',
          with_bbox=True,
          with_mask=True,
