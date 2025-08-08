@@ -191,10 +191,15 @@ custom_hooks = [
          switch_epoch=max_epochs - close_mosaic_epochs,
          switch_pipeline=train_pipeline_stage2)
 ]
+# train_cfg = dict(max_epochs=max_epochs,
+#                  val_interval=5,
+#                  dynamic_intervals=[((max_epochs - close_mosaic_epochs),
+#                                      _base_.val_interval_stage2)])
+
 train_cfg = dict(max_epochs=max_epochs,
-                 val_interval=5,
-                 dynamic_intervals=[((max_epochs - close_mosaic_epochs),
-                                     _base_.val_interval_stage2)])
+                 val_interval=1,
+                 dynamic_intervals=[])
+                                     
 optim_wrapper = dict(optimizer=dict(
     _delete_=True,
     type='AdamW',
