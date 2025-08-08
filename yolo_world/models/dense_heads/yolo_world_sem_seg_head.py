@@ -649,6 +649,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             
             for b in range(B):
                 gt_instances = batch_gt_instances[b]
+                print("[DEBUG] gt_instances :", gt_instances) # InstanceData object
                 masks = gt_instances.masks.to_tensor(dtype=torch.bool,
                                                      device=semantic_logits.device)
                 labels = gt_instances.labels
