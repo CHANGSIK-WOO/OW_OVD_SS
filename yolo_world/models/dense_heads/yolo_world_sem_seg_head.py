@@ -209,7 +209,7 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         
         cls_logit, bbox_preds, bbox_dist_preds, _ = multi_apply(
             self.forward_single, img_feats, txt_feats, self.cls_preds,
-            self.reg_preds, self.cls_contrasts, self.seg_preds)        
+            self.reg_preds, self.cls_contrasts,)        
         
         if self.training:
             #return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos
@@ -218,11 +218,15 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
             #return cls_logit, bbox_preds, None, coeff_preds, mask_protos
             return cls_logit, bbox_preds, None, mask_protos, semantic_logits
 
+    # def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
+    #                    cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
+    #                    cls_contrast: nn.ModuleList,
+    #                    seg_pred: nn.ModuleList) -> Tuple:
 
     def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
                        cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
                        cls_contrast: nn.ModuleList,
-                       seg_pred: nn.ModuleList) -> Tuple:
+                       ) -> Tuple:
         """Forward feature of a single scale level."""
         #print("[DEBUG] YOLOWorldSegHeadModule_forward_single :")
         b, _, h, w = img_feat.shape
