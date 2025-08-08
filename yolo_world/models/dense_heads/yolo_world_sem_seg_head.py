@@ -646,15 +646,28 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             semantic_gt = torch.zeros((B, H, W),
                                       dtype=torch.long,
                                       device=semantic_logits.device)
-            
-            for b in range(B):
-                gt_instances = batch_gt_instances[b]
-                print("[DEBUG] gt_instances :", gt_instances) # InstanceData object
-                masks = gt_instances[2:]
-                labels = gt_instances[1:2].item()
 
-                for m, l in zip(masks, labels):
-                    semantic_gt[b][m] = l
+            # Total ground truth instances
+            # shape: (N, 6) : [img_idx, class_id, x1, y1, x2, y2]
+            all_gt_instances = batch_gt_instances  # shape: (N, 6)
+            all_gt_masks = batch_gt_masks  # shape: (N, H, W)
+
+            for b in range(B):
+              assigned_idxs = assigned_gt_idxs[b]         # shape: (8400,)
+              fg_mask = fg_mask_pre_prior[b]              # shape: (8400,)
+    
+              # positive prediction indices
+              # shape: (~N_pos,) : indices of positive samples in the flattened grid cells
+              pos_pred_inds = fg_mask.nonzero(as_tuple=False).squeeze(1)  # shape: (~N_pos,)
+              pos_gt_inds = assigned_idxs[pos_pred_inds]                  # shape: (~N_pos,)
+    
+              for gt_ind in pos_gt_inds.unique():
+                if gt_ind < 0:
+                  continue  # -1: no match
+                gt = all_gt_instances[gt_ind]
+                mask = all_gt_masks[gt_ind]  # shape: (H, W)
+                label = int(gt[1])           # class_id
+                semantic_gt[b][mask] = label
             
             if semantic_gt.shape[-2:] != semantic_logits.shape[-2:]:
                 semantic_gt = F.interpolate(semantic_gt.unsqueeze(1).float(),
