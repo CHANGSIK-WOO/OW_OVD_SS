@@ -125,25 +125,25 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
                               kernel_size=1)))
             
             # # (B, mask_channels, H, W), mask_channels = 32
-            # self.seg_preds.append(
-            #     nn.Sequential(
-            #         ConvModule(in_channels=self.in_channels[i],
-            #                    out_channels=seg_out_channels,
-            #                    kernel_size=3,
-            #                    stride=1,
-            #                    padding=1,
-            #                    norm_cfg=self.norm_cfg,
-            #                    act_cfg=self.act_cfg),
-            #         ConvModule(in_channels=seg_out_channels,
-            #                    out_channels=seg_out_channels,
-            #                    kernel_size=3,
-            #                    stride=1,
-            #                    padding=1,
-            #                    norm_cfg=self.norm_cfg,
-            #                    act_cfg=self.act_cfg),
-            #         nn.Conv2d(in_channels=seg_out_channels,
-            #                   out_channels=self.mask_channels,
-            #                   kernel_size=1)))
+            self.seg_preds.append(
+                nn.Sequential(
+                    ConvModule(in_channels=self.in_channels[i],
+                               out_channels=seg_out_channels,
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               norm_cfg=self.norm_cfg,
+                               act_cfg=self.act_cfg),
+                    ConvModule(in_channels=seg_out_channels,
+                               out_channels=seg_out_channels,
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               norm_cfg=self.norm_cfg,
+                               act_cfg=self.act_cfg),
+                    nn.Conv2d(in_channels=seg_out_channels,
+                              out_channels=self.mask_channels,
+                              kernel_size=1)))
 
             if self.use_bn_head:
                 self.cls_contrasts.append(
@@ -203,20 +203,20 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         mask_protos = self.proto_pred(img_feats[0]) # (B, mask_channels, H, W)
         semantic_logits = self.semantic_pred(mask_protos) # (B, num_classes, H, W)
 
-        # cls_logit, bbox_preds, bbox_dist_preds, coeff_preds = multi_apply(
-        #     self.forward_single, img_feats, txt_feats, self.cls_preds,
-        #     self.reg_preds, self.cls_contrasts, self.seg_preds)
-        
-        cls_logit, bbox_preds, bbox_dist_preds, _ = multi_apply(
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds = multi_apply(
             self.forward_single, img_feats, txt_feats, self.cls_preds,
-            self.reg_preds, self.cls_contrasts,)        
+            self.reg_preds, self.cls_contrasts, self.seg_preds)
+        
+        # cls_logit, bbox_preds, bbox_dist_preds, _ = multi_apply(
+        #     self.forward_single, img_feats, txt_feats, self.cls_preds,
+        #     self.reg_preds, self.cls_contrasts,)        
         
         if self.training:
             #return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos
-            return cls_logit, bbox_preds, bbox_dist_preds, mask_protos, semantic_logits
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits
         else:
             #return cls_logit, bbox_preds, None, coeff_preds, mask_protos
-            return cls_logit, bbox_preds, None, mask_protos, semantic_logits
+            return cls_logit, bbox_preds, None, coeff_preds, mask_protos, semantic_logits
 
     # def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
     #                    cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
@@ -226,6 +226,7 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
     def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
                        cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
                        cls_contrast: nn.ModuleList,
+                       seg_pred: nn.ModuleList,
                        ) -> Tuple:
         """Forward feature of a single scale level."""
         #print("[DEBUG] YOLOWorldSegHeadModule_forward_single :")
@@ -234,7 +235,7 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         cls_logit = cls_contrast(cls_embed, txt_feat) # cls_embed - txt_feat cosine similarity for cls_logit (class score map)
         bbox_dist_preds = reg_pred(img_feat) 
 
-        # coeff_pred = seg_pred(img_feat)
+        coeff_pred = seg_pred(img_feat)
         
         if self.reg_max > 1: # reg_max = 16 
             bbox_dist_preds = bbox_dist_preds.reshape(
@@ -272,12 +273,12 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
             bbox_preds = bbox_dist_preds
 
         if self.training:
-            #return cls_logit, bbox_preds, bbox_dist_preds, coeff_pred
-            return cls_logit, bbox_preds, bbox_dist_preds, None
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_pred
+            # return cls_logit, bbox_preds, bbox_dist_preds, None
         
         else:
-            #return cls_logit, bbox_preds, None, coeff_pred
-            return cls_logit, bbox_preds, None, None
+            return cls_logit, bbox_preds, None, coeff_pred
+            # return cls_logit, bbox_preds, None, None
 
 
 
@@ -379,12 +380,17 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
          batch_img_metas) = outputs
 
         outs = self(img_feats, txt_feats)
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits = outs
 
         loss_inputs = outs + (batch_gt_instances, batch_img_metas,
                               batch_gt_instances_ignore)
         losses = self.loss_by_feat(*loss_inputs)
 
-        predictions = self.predict_by_feat(*outs,
+        predictions = self.predict_by_feat(cls_scores = cls_logit,
+                                           bbox_preds=bbox_preds,
+                                           objectnesses=None,
+                                           coeff_preds=coeff_preds,
+                                           proto_preds=mask_protos,     
                                            batch_img_metas=batch_img_metas,
                                            cfg=proposal_cfg)
         return losses, predictions
@@ -408,7 +414,13 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             data_samples.metainfo for data_samples in batch_data_samples
         ]
         outs = self(img_feats, txt_feats)
-        predictions = self.predict_by_feat(*outs,
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits = outs
+
+        predictions = self.predict_by_feat(cls_scores = cls_logit,
+                                           bbox_preds=bbox_preds,
+                                           objectnesses=None,
+                                           coeff_preds=coeff_preds,
+                                           proto_preds=mask_protos,                                           
                                            batch_img_metas=batch_img_metas,
                                            rescale=rescale)
         return predictions
@@ -428,7 +440,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             cls_scores: Sequence[Tensor],
             bbox_preds: Sequence[Tensor],
             bbox_dist_preds: Sequence[Tensor],
-            #coeff_preds: Sequence[Tensor],
+            coeff_preds: Sequence[Tensor],
             mask_protos: Tensor,
             semantic_logits: Tensor,
             batch_gt_instances: Sequence[InstanceData],
