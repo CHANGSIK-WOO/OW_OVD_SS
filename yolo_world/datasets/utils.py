@@ -18,6 +18,15 @@ def yolow_collate(data_batch: Sequence,
     batch_bboxes_labels = []
     batch_masks = []
     for i in range(len(data_batch)):
+        
+        #2025.08.08 ==================================================
+        # If data_batch[i] is None, skip it
+        data_batch = [db for db in data_batch if db is not None]
+
+        if len(data_batch) == 0:
+            return None
+        #2025.08.08 ==================================================
+        
         datasamples = data_batch[i]['data_samples']
         inputs = data_batch[i]['inputs']
         batch_imgs.append(inputs)
