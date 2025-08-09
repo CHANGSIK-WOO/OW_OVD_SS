@@ -723,31 +723,6 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             batch_inds[1:] = box_sum_flag.cumsum(dim=0)[:-1][..., None]
             _assigned_gt_idxs = assigned_gt_idxs + batch_inds
 
-
-            #(25.08.09) semantic segmentation loss
-            sem_ups = [F.interpolate(s, (mask_h, mask_w), mode='bilinear', align_corners=False) for s in sem_logit]
-            sem_fused = sum(sem_ups) / len(sem_ups)   
-
-            IGNORE_IDX = 255
-            sem_gt = torch.full((num_imgs, mask_h, mask_w), IGNORE_IDX, dtype=torch.long, device=proto_preds.device) # 255 full mask
-            offset = torch.zeros(num_imgs, dtype=torch.long, device=box_sum_flag.device)
-            if num_imgs > 1:
-                offset[1:] = torch.cumsum(box_sum_flag[:-1], dim=0)
-
-            for bs in range(num_imgs):
-                n_gt = int(box_sum_flag[bs])
-                if n_gt == 0:
-                    continue
-                start = int(offset[bs]); end = start + n_gt
-                masks_b  = batch_gt_masks[start:end].bool()      # (n_gt, Hm, Wm)
-                labels_b = gt_labels[bs, :n_gt, 0].long()         # (n_gt,)
-                for k in range(n_gt):                            # Overlap masks
-                    sem_gt[bs][masks_b[k]] = labels_b[k]
-
-            loss_sem = self.loss_sem_mask(sem_fused, sem_gt)
-
-
-
             for bs in range(num_imgs):
                 #print("[DEBUG] bs :", bs)                
                 # 8400
@@ -811,6 +786,31 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                 loss_mask += _loss_mask.mean()                
                 #print("[DEBUG] _loss_mask.mean() :", _loss_mask.mean().shape)  
                 #print("[DEBUG] after loss_mask :", loss_mask.shape) 
+            
+            #(25.08.09) semantic segmentation loss
+            sem_ups = [F.interpolate(s, (mask_h, mask_w), mode='bilinear', align_corners=False) for s in sem_logit]
+            sem_fused = sum(sem_ups) / len(sem_ups)   
+            batch_gt_masks_copy = batch_gt_masks.deepcopy()
+
+            IGNORE_IDX = 255
+            sem_gt = torch.full((num_imgs, mask_h, mask_w), IGNORE_IDX, dtype=torch.long, device=proto_preds.device) # 255 full mask
+            offset = torch.zeros(num_imgs, dtype=torch.long, device=box_sum_flag.device)
+            if num_imgs > 1:
+                offset[1:] = torch.cumsum(box_sum_flag[:-1], dim=0)
+
+            for bs in range(num_imgs):
+                n_gt = int(box_sum_flag[bs])
+                if n_gt == 0:
+                    continue
+                start = int(offset[bs]); end = start + n_gt
+                masks_b_bool = (batch_gt_masks[start:end] > 0)      # (n_gt, Hm, Wm)
+                labels_b = gt_labels[bs, :n_gt, 0].long()         # (n_gt,)
+                for k in range(n_gt):                            # Overlap masks
+                    sem_gt[bs][masks_b_bool[k]] = labels_b[k]
+                
+            print("[DEBUG] sem_gt :", sem_gt[0]) # torch.Size([8, 160, 160]) : 8 images in batch, 160 * 160 mask
+            print("[DEBUG] sem_fused :", sem_fused[0]) # torch.Size([8, 160, 160]) : 8 images in batch, 160 * 160 mask
+            loss_sem = self.loss_sem_mask(sem_fused, sem_gt)
 
         else:
             loss_bbox = flatten_pred_bboxes.sum() * 0
