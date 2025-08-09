@@ -25,7 +25,6 @@ from mmyolo.models.dense_heads.yolov5_ins_head import (
 
 from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
-
 @MODELS.register_module()
 class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
@@ -68,10 +67,15 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         self.seg_preds = nn.ModuleList()
         self.cls_contrasts = nn.ModuleList()
 
+        # (25.08.09) sem_preds : semantic segmentation predictions
+        self.sem_seg_preds = nn.ModuleList()
+
+
         reg_out_channels = max(
             (16, self.in_channels[0] // 4, self.reg_max * 4))
         seg_out_channels = max(self.in_channels[0] // 4, self.mask_channels)
         cls_out_channels = max(self.in_channels[0], self.num_classes)
+        sem_seg_out_channels = max(self.in_channels[0] // 4, self.mask_channels)
 
         bbox_norm_cfg = self.norm_cfg
         bbox_norm_cfg['requires_grad'] = not self.freeze_bbox
@@ -123,8 +127,7 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
                     nn.Conv2d(in_channels=cls_out_channels,
                               out_channels=self.embed_dims,
                               kernel_size=1)))
-            
-            # # (B, mask_channels, H, W), mask_channels = 32
+            # (B, mask_channels, H, W), mask_channels = 32
             self.seg_preds.append(
                 nn.Sequential(
                     ConvModule(in_channels=self.in_channels[i],
@@ -144,6 +147,27 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
                     nn.Conv2d(in_channels=seg_out_channels,
                               out_channels=self.mask_channels,
                               kernel_size=1)))
+            
+            # (25.08.09) sem_seg_preds : semantic segmentation predictions
+            self.sem_seg_preds.append( 
+                nn.Sequential(
+                    ConvModule(in_channels=self.in_channels[i],
+                               out_channels=sem_seg_out_channels,
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               norm_cfg=bbox_norm_cfg,
+                               act_cfg=self.act_cfg),
+                    ConvModule(in_channels=sem_seg_out_channels,
+                               out_channels=sem_seg_out_channels,
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               norm_cfg=bbox_norm_cfg,
+                               act_cfg=self.act_cfg),
+                    nn.Conv2d(in_channels=sem_seg_out_channels,
+                              out_channels=self.num_classes,
+                              kernel_size=1)))            
 
             if self.use_bn_head:
                 self.cls_contrasts.append(
@@ -152,7 +176,8 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
                 self.cls_contrasts.append(ContrastiveHead(self.embed_dims)) #initialization of contrastive head
             
         # tensor([0.0, 1.0, 2.0, ..., 15.0]). shape (16, )
-        proj = torch.arange(self.reg_max, dtype=torch.float)        
+        proj = torch.arange(self.reg_max, dtype=torch.float)
+        
         self.register_buffer('proj', proj, persistent=False)
 
         # (B, proto_channels, H, W)
@@ -160,22 +185,15 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
                                       middle_channels=self.proto_channels,
                                       mask_channels=self.mask_channels,
                                       norm_cfg=self.norm_cfg,
-                                      act_cfg=self.act_cfg,)
-        
-        # semantic head: in_channel = mask_channels (proto_pred output)
-        self.semantic_pred = nn.Conv2d(in_channels=self.mask_channels,
-                                       out_channels=self.num_classes,
-                                       kernel_size=1,)
-        
-        if self.freeze_bbox or self.freeze_bbox:
+                                      act_cfg=self.act_cfg)
+        if self.freeze_bbox or self.freeze_all:
             self._freeze_all()
-
-
+        
     def _freeze_all(self):
         #print("[DEBUG] YOLOWorldSegHeadModule_freeze all")
         frozen_list = [self.cls_preds, self.reg_preds, self.cls_contrasts]
         if self.freeze_all:
-            frozen_list.extend([self.proto_pred, self.seg_preds])
+            frozen_list.extend([self.proto_pred, self.seg_preds, self.sem_seg_preds])
         for module in frozen_list:
             for m in module.modules():
                 if isinstance(m, _BatchNorm):
@@ -199,44 +217,33 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         #print("[DEBUG] YOLOWorldSegHeadModule_forward")
         assert len(img_feats) == self.num_levels
         txt_feats = [txt_feats for _ in range(self.num_levels)]
-        
-        mask_protos = self.proto_pred(img_feats[0]) # (B, mask_channels, H, W)
-        semantic_logits = self.semantic_pred(mask_protos) # (B, num_classes, H, W)
-
-        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds = multi_apply(
+        mask_protos = self.proto_pred(img_feats[0])
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, sem_logit = multi_apply(
             self.forward_single, img_feats, txt_feats, self.cls_preds,
-            self.reg_preds, self.cls_contrasts, self.seg_preds)
-        
-        # cls_logit, bbox_preds, bbox_dist_preds, _ = multi_apply(
-        #     self.forward_single, img_feats, txt_feats, self.cls_preds,
-        #     self.reg_preds, self.cls_contrasts,)        
+            self.reg_preds, self.cls_contrasts, self.seg_preds, self.sem_seg_preds,)
         
         if self.training:
-            #return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos
-            return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, sem_logit
         else:
-            #return cls_logit, bbox_preds, None, coeff_preds, mask_protos
-            return cls_logit, bbox_preds, None, coeff_preds, mask_protos, semantic_logits
+            return cls_logit, bbox_preds, None, coeff_preds, mask_protos, sem_logit
 
-    # def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
-    #                    cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
-    #                    cls_contrast: nn.ModuleList,
-    #                    seg_pred: nn.ModuleList) -> Tuple:
 
     def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
                        cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
                        cls_contrast: nn.ModuleList,
                        seg_pred: nn.ModuleList,
-                       ) -> Tuple:
+                       sem_seg_pred: nn.ModuleList,) -> Tuple:
         """Forward feature of a single scale level."""
         #print("[DEBUG] YOLOWorldSegHeadModule_forward_single :")
         b, _, h, w = img_feat.shape
         cls_embed = cls_pred(img_feat) # image feature map 
         cls_logit = cls_contrast(cls_embed, txt_feat) # cls_embed - txt_feat cosine similarity for cls_logit (class score map)
         bbox_dist_preds = reg_pred(img_feat) 
-
         coeff_pred = seg_pred(img_feat)
-        
+
+        # (25.08.09) semantic segmentation prediction
+        sem_logit = sem_seg_pred(img_feat) 
+
         if self.reg_max > 1: # reg_max = 16 
             bbox_dist_preds = bbox_dist_preds.reshape(
                 [-1, 4, self.reg_max, h * w]).permute(0, 3, 1, 2)
@@ -271,15 +278,10 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
             # (B, h*w, 4) --> (B, 4, h*w) --> (B, 4, h, w)
         else:
             bbox_preds = bbox_dist_preds
-
         if self.training:
-            return cls_logit, bbox_preds, bbox_dist_preds, coeff_pred
-            # return cls_logit, bbox_preds, bbox_dist_preds, None
-        
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_pred, sem_logit
         else:
-            return cls_logit, bbox_preds, None, coeff_pred
-            # return cls_logit, bbox_preds, None, None
-
+            return cls_logit, bbox_preds, None, coeff_pred, sem_logit
 
 
 @MODELS.register_module()
@@ -305,14 +307,16 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                                reduction='mean',
                                loss_weight=1.5 / 4),
                  mask_overlap: bool = True,
-                #  loss_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
-                #                               use_sigmoid=True,
-                #                               reduction='none'),
                  loss_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
+                                              use_sigmoid=True,
+                                              reduction='none'),
+                 loss_mask_weight=0.05, 
+
+                 loss_sem_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
                                               use_sigmoid=False,
-                                              reduction='mean'),
-                                                              
-                #  loss_mask_weight=0.05,
+                                              reduction='mean',
+                                              ignore_index=255,),
+                 loss_sem_mask_weight=0.05,                                  
                  train_cfg: OptConfigType = None,
                  test_cfg: OptConfigType = None,
                  init_cfg: OptMultiConfig = None):
@@ -329,7 +333,11 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         self.loss_obj = None
         self.mask_overlap = mask_overlap
         self.loss_mask: nn.Module = MODELS.build(loss_mask)
-        # self.loss_mask_weight = loss_mask_weight
+        self.loss_mask_weight = loss_mask_weight
+
+        #(25.08.09)
+        self.loss_sem_mask: nn.Module = MODELS.build(loss_sem_mask)
+        self.loss_sem_mask_weight = loss_sem_mask_weight
 
     def special_init(self):
         """Since YOLO series algorithms will inherit from YOLOv5Head, but
@@ -364,6 +372,66 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         
         return losses
 
+    def predict_by_feat(self,
+                        cls_scores: List[Tensor],
+                        bbox_preds: List[Tensor],
+                        objectnesses: Optional[List[Tensor]] = None,
+                        coeff_preds: Optional[List[Tensor]] = None,
+                        proto_preds: Optional[Tensor] = None,
+                        sem_logit: Optional[List[Tensor]] = None,
+                        batch_img_metas: Optional[List[dict]] = None,
+                        cfg: Optional[ConfigDict] = None,
+                        rescale: bool = True,
+                        with_nms: bool = True) -> List[InstanceData]:
+            
+            #parent class' predict_by_feat() return
+            det_results = super().predict_by_feat(cls_scores, bbox_preds, objectnesses, coeff_preds, proto_preds,
+                                                  batch_img_metas=batch_img_metas, cfg=cfg, rescale=rescale, with_nms=with_nms,)
+            
+            if sem_logit is None :
+                return det_results
+            
+            num_imgs = len(batch_img_metas)
+            _, _, mask_h, mask_w = proto_preds.shape
+
+            sem_ups = [F.interpolate(s, size=(mask_h, mask_w), mode='bilinear', align_corners=False) for s in sem_logit]
+            sem_fused = sum(sem_ups) / max(1, len(sem_ups)) # (B, num_classes, mask_h, mask_w)
+            sem_label_all = sem_fused.softmax(dim=1).argmax(dim=1) # (B, mask_h, mask_w)
+
+            out = list()
+            for i in range(num_imgs):
+                meta = batch_img_metas[i]
+                input_h, input_w = meta['batch_input_shape']
+
+                # proto→입력 크기
+                sem_i = sem_label_all[i:i+1].float().unsqueeze(1)     # (1,1,Hm,Wm)
+                sem_i = F.interpolate(sem_i, size=(input_h, input_w), mode='nearest')  # (1,1,Hin,Win)
+
+                if rescale:
+                # pad crop (상단/좌측 pad만 고려하는 원본 규칙)
+                    if 'pad_param' in meta:
+                        top_pad, bot_pad, left_pad, right_pad = meta['pad_param']
+                        top, left = int(top_pad), int(left_pad)
+                        bottom, right = int(input_h - top_pad), int(input_w - left_pad)
+                        sem_i = sem_i[:, :, top:bottom, left:right]
+                    # 입력→원본 크기
+                    oh, ow = meta['ori_shape'][:2]
+                    sem_i = F.interpolate(sem_i, size=(oh, ow), mode='nearest')   # (1,1,oh,ow)
+                
+                else:
+                    ih, iw = meta['img_shape'][:2]
+                    sem_i = F.interpolate(sem_i, size=(ih, iw), mode='nearest')   # (1,1,ih,iw)
+
+                sem_i = sem_i.squeeze(1).long()[0]  # (H, W)
+
+                # 결과 객체에 pred_sem_seg 추가
+                res_i = det_results[i]
+                res_i.pred_sem_seg = sem_i
+                out.append(res_i)
+
+            return out
+
+
     def loss_and_predict(
         self,
         img_feats: Tuple[Tensor],
@@ -380,17 +448,12 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
          batch_img_metas) = outputs
 
         outs = self(img_feats, txt_feats)
-        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits = outs
 
         loss_inputs = outs + (batch_gt_instances, batch_img_metas,
                               batch_gt_instances_ignore)
         losses = self.loss_by_feat(*loss_inputs)
 
-        predictions = self.predict_by_feat(cls_scores = cls_logit,
-                                           bbox_preds=bbox_preds,
-                                           objectnesses=None,
-                                           coeff_preds=coeff_preds,
-                                           proto_preds=mask_protos,     
+        predictions = self.predict_by_feat(*outs,
                                            batch_img_metas=batch_img_metas,
                                            cfg=proposal_cfg)
         return losses, predictions
@@ -414,13 +477,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             data_samples.metainfo for data_samples in batch_data_samples
         ]
         outs = self(img_feats, txt_feats)
-        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits = outs
-
-        predictions = self.predict_by_feat(cls_scores = cls_logit,
-                                           bbox_preds=bbox_preds,
-                                           objectnesses=None,
-                                           coeff_preds=coeff_preds,
-                                           proto_preds=mask_protos,                                           
+        predictions = self.predict_by_feat(*outs,
                                            batch_img_metas=batch_img_metas,
                                            rescale=rescale)
         return predictions
@@ -441,8 +498,8 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             bbox_preds: Sequence[Tensor],
             bbox_dist_preds: Sequence[Tensor],
             coeff_preds: Sequence[Tensor],
-            mask_protos: Tensor,
-            semantic_logits: Tensor,
+            proto_preds: Tensor,
+            sem_logit: Sequence[Tensor],
             batch_gt_instances: Sequence[InstanceData],
             batch_gt_masks: Sequence[Tensor],
             batch_img_metas: Sequence[dict],
@@ -540,13 +597,12 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         #print("[DEBUG] flatten_pred_dists :", flatten_pred_dists[0])
 
 
-        # flatten_pred_coeffs = [
-        #     coeff_pred.permute(0, 2, 3,
-        #                        1).reshape(num_imgs, -1,
-        #                                   self.head_module.mask_channels)
-        #     for coeff_pred in coeff_preds
-        # ]
-
+        flatten_pred_coeffs = [
+            coeff_pred.permute(0, 2, 3,
+                               1).reshape(num_imgs, -1,
+                                          self.head_module.mask_channels)
+            for coeff_pred in coeff_preds
+        ]
         #print("[DEBUG] flatten_pred_coeffs :", flatten_pred_coeffs[0].shape) # torch.Size([8, 6400, 32]) : 32 MASK COEFFICIENT DIM (MASK CHANNELS)
         #print("[DEBUG] flatten_pred_coeffs :", flatten_pred_coeffs[0])
 
@@ -570,11 +626,9 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         #print("[DEBUG] after decoding flatten_pred_bboxes :", flatten_pred_bboxes.shape)
         #print("[DEBUG] after decoding flatten_pred_bboxes :", flatten_pred_bboxes[0])        
 
-        # flatten_pred_coeffs = torch.cat(flatten_pred_coeffs, dim=1) 
-        #flatten_pred_coeffs: (8, 8400, 32)
+        flatten_pred_coeffs = torch.cat(flatten_pred_coeffs, dim=1) #flatten_pred_coeffs: (8, 8400, 32)
         #print("[DEBUG] after cat flatten_pred_coeffs :", flatten_pred_coeffs.shape)
         #print("[DEBUG] after cat flatten_pred_coeffs :", flatten_pred_coeffs[0])
-
 
         assigned_result = self.assigner(
             (flatten_pred_bboxes.detach()).type(gt_bboxes.dtype),
@@ -653,135 +707,121 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                                      weight=bbox_weight.expand(-1,
                                                                4).reshape(-1),
                                      avg_factor=assigned_scores_sum)
-            
-            B, _, H, W = semantic_logits.shape
-            semantic_gt = torch.zeros((B, H, W),
-                                      dtype=torch.long,
-                                      device=semantic_logits.device)
 
-            # Total ground truth instances
-            # shape: (N, 6) : [img_idx, class_id, x1, y1, x2, y2]
-            all_gt_instances = batch_gt_instances  # shape: (N, 6)
-            all_gt_masks = batch_gt_masks  # shape: (N, H, W)
+            _, c, mask_h, mask_w = proto_preds.shape
+            if batch_gt_masks.shape[-2:] != (mask_h, mask_w):
+                batch_gt_masks = F.interpolate(batch_gt_masks[None],
+                                               (mask_h, mask_w),
+                                               mode='nearest')[0]               
 
-            for b in range(B):
-              assigned_idxs = assigned_gt_idxs[b]         # shape: (8400,)
-              fg_mask = fg_mask_pre_prior[b]              # shape: (8400,)
-    
-              # positive prediction indices
-              # shape: (~N_pos,) : indices of positive samples in the flattened grid cells
-              pos_pred_inds = fg_mask.nonzero(as_tuple=False).squeeze(1)  # shape: (~N_pos,)
-              pos_gt_inds = assigned_idxs[pos_pred_inds]                  # shape: (~N_pos,)
-    
-              for gt_ind in pos_gt_inds.unique():
-                if gt_ind < 0:
-                  continue  # -1: no match
-                gt = all_gt_instances[gt_ind]
-                mask = all_gt_masks[gt_ind]  # shape: (H, W)
-                label = int(gt[1])           # class_id
-                semantic_gt[b][mask] = label
-            
-            if semantic_gt.shape[-2:] != semantic_logits.shape[-2:]:
-                semantic_gt = F.interpolate(semantic_gt.unsqueeze(1).float(),
-                                            semantic_logits.shape[-2:],
-                                            mode='nearest').squeeze(1).long()
+            loss_mask = torch.zeros(1, device=loss_dfl.device)
+            box_sum_flag = pad_bbox_flag.long().sum(dim=1).squeeze(1)
 
-            loss_mask = F.cross_entropy(semantic_logits, 
-                                        semantic_gt, 
-                                        ignore_index=255, 
-                                        reduction='mean')
-
-            # _, c, mask_h, mask_w = mask_protos.shape
-            # if batch_gt_masks.shape[-2:] != (mask_h, mask_w):
-            #     batch_gt_masks = F.interpolate(batch_gt_masks[None],
-            #                                    (mask_h, mask_w),
-            #                                    mode='nearest')[0]
-
-            # loss_mask = torch.zeros(1, device=loss_dfl.device)
-            # box_sum_flag = pad_bbox_flag.long().sum(dim=1).squeeze(1)
-
-            # batch_inds = torch.zeros(num_imgs,
-            #                          dtype=torch.int64,
-            #                          device=assigned_gt_idxs.device)[:, None]
-            # batch_inds[1:] = box_sum_flag.cumsum(dim=0)[:-1][..., None]
-            # _assigned_gt_idxs = assigned_gt_idxs + batch_inds
+            batch_inds = torch.zeros(num_imgs,
+                                     dtype=torch.int64,
+                                     device=assigned_gt_idxs.device)[:, None]
+            batch_inds[1:] = box_sum_flag.cumsum(dim=0)[:-1][..., None]
+            _assigned_gt_idxs = assigned_gt_idxs + batch_inds
 
 
-            # for bs in range(num_imgs):
-            #     #print("[DEBUG] bs :", bs)                
-            #     # 8400
-            #     bbox_match_inds = assigned_gt_idxs[bs]
-            #     #print("[DEBUG] bbox_match_inds :", bbox_match_inds.shape) 
-            #     #print("[DEBUG] bbox_match_inds :", bbox_match_inds)                
+            #(25.08.09) semantic segmentation loss
+            sem_ups = [F.interpolate(s, (mask_h, mask_w), mode='bilinear', align_corners=False) for s in sem_logit]
+            sem_fused = sum(sem_ups) / len(sem_ups)   
+
+            IGNORE_IDX = 255
+            sem_gt = torch.full((num_imgs, mask_h, mask_w), IGNORE_IDX, dtype=torch.long, device=proto_preds.device) # 255 full mask
+            offset = torch.zeros(num_imgs, dtype=torch.long, device=box_sum_flag.device)
+            if num_imgs > 1:
+                offset[1:] = torch.cumsum(box_sum_flag[:-1], dim=0)
+
+            for bs in range(num_imgs):
+                n_gt = int(box_sum_flag[bs])
+                if n_gt == 0:
+                    continue
+                start = int(offset[bs]); end = start + n_gt
+                masks_b  = batch_gt_masks[start:end].bool()      # (n_gt, Hm, Wm)
+                labels_b = gt_labels[bs, :n_gt, 0].long()         # (n_gt,)
+                for k in range(n_gt):                            # Overlap masks
+                    sem_gt[bs][masks_b[k]] = labels_b[k]
+
+            loss_sem = self.loss_sem_mask(sem_fused, sem_gt)
+
+
+
+            for bs in range(num_imgs):
+                #print("[DEBUG] bs :", bs)                
+                # 8400
+                bbox_match_inds = assigned_gt_idxs[bs]
+                #print("[DEBUG] bbox_match_inds :", bbox_match_inds.shape) 
+                #print("[DEBUG] bbox_match_inds :", bbox_match_inds)                
                                
-            #     mask_match_inds = _assigned_gt_idxs[bs]
-            #     #print("[DEBUG] mask_match_inds :", mask_match_inds.shape)                
-            #     #print("[DEBUG] mask_match_inds :", mask_match_inds)                                
+                mask_match_inds = _assigned_gt_idxs[bs]
+                #print("[DEBUG] mask_match_inds :", mask_match_inds.shape)                
+                #print("[DEBUG] mask_match_inds :", mask_match_inds)                                
 
-            #     bbox_match_inds = torch.masked_select(bbox_match_inds,
-            #                                           fg_mask_pre_prior[bs])
-            #     #print("[DEBUG] bbox_match_inds :", bbox_match_inds.shape)
-            #     #print("[DEBUG] bbox_match_inds :", bbox_match_inds)                
+                bbox_match_inds = torch.masked_select(bbox_match_inds,
+                                                      fg_mask_pre_prior[bs])
+                #print("[DEBUG] bbox_match_inds :", bbox_match_inds.shape)
+                #print("[DEBUG] bbox_match_inds :", bbox_match_inds)                
                                 
 
-            #     mask_match_inds = torch.masked_select(mask_match_inds,
-            #                                           fg_mask_pre_prior[bs])
-            #     #print("[DEBUG] mask_match_inds :", mask_match_inds.shape)                
-            #     #print("[DEBUG] mask_match_inds :", mask_match_inds)                                
+                mask_match_inds = torch.masked_select(mask_match_inds,
+                                                      fg_mask_pre_prior[bs])
+                #print("[DEBUG] mask_match_inds :", mask_match_inds.shape)                
+                #print("[DEBUG] mask_match_inds :", mask_match_inds)                                
 
 
-            #     # mask
-            #     mask_dim = coeff_preds[0].shape[1]
-            #     #print("[DEBUG] coeff_preds[0] :", coeff_preds[0])                
-            #     #print("[DEBUG] mask_dim :", mask_dim)                
+                # mask
+                mask_dim = coeff_preds[0].shape[1]
+                #print("[DEBUG] coeff_preds[0] :", coeff_preds[0])                
+                #print("[DEBUG] mask_dim :", mask_dim)                
                 
-            #     prior_mask_mask = fg_mask_pre_prior[bs].unsqueeze(-1).repeat(
-            #         [1, mask_dim])
-            #     #print("[DEBUG] fg_mask_pre_prior[bs] :", fg_mask_pre_prior[bs].shape)  
-            #     #print("[DEBUG] fg_mask_pre_prior[bs].unsqueeze(-1) :", fg_mask_pre_prior[bs].unsqueeze(-1).shape)                            
-            #     #print("[DEBUG] fg_mask_pre_prior[bs].unsqueeze(-1).repeat([1, mask_dim]) :", fg_mask_pre_prior[bs].unsqueeze(-1).repeat([1, mask_dim]).shape)                                            
-            #     #print("[DEBUG] prior_mask_mask :", prior_mask_mask)     
-            #     pred_coeffs_pos = torch.masked_select(flatten_pred_coeffs[bs],
-            #                                           prior_mask_mask).reshape(
-            #                                               [-1, mask_dim])
-            #     #print("[DEBUG] pred_coeffs_pos :", pred_coeffs_pos.shape)                                                           
+                prior_mask_mask = fg_mask_pre_prior[bs].unsqueeze(-1).repeat(
+                    [1, mask_dim])
+                #print("[DEBUG] fg_mask_pre_prior[bs] :", fg_mask_pre_prior[bs].shape)  
+                #print("[DEBUG] fg_mask_pre_prior[bs].unsqueeze(-1) :", fg_mask_pre_prior[bs].unsqueeze(-1).shape)                            
+                #print("[DEBUG] fg_mask_pre_prior[bs].unsqueeze(-1).repeat([1, mask_dim]) :", fg_mask_pre_prior[bs].unsqueeze(-1).repeat([1, mask_dim]).shape)                                            
+                #print("[DEBUG] prior_mask_mask :", prior_mask_mask)     
+                pred_coeffs_pos = torch.masked_select(flatten_pred_coeffs[bs],
+                                                      prior_mask_mask).reshape(
+                                                          [-1, mask_dim])
+                #print("[DEBUG] pred_coeffs_pos :", pred_coeffs_pos.shape)                                                           
 
-            #     match_boxes = gt_bboxes[bs][bbox_match_inds] / 4
-            #     normed_boxes = gt_bboxes[bs][bbox_match_inds] / 640
-            #     #print("[DEBUG] gt_bboxes[bs] :", gt_bboxes[bs].shape)
+                match_boxes = gt_bboxes[bs][bbox_match_inds] / 4
+                normed_boxes = gt_bboxes[bs][bbox_match_inds] / 640
+                #print("[DEBUG] gt_bboxes[bs] :", gt_bboxes[bs].shape)
 
-            #     bbox_area = (normed_boxes[:, 2:] -
-            #                  normed_boxes[:, :2]).prod(dim=1)
-            #     if not mask_match_inds.any():
-            #         continue
-            #     assert not self.mask_overlap
-            #     mask_gti = batch_gt_masks[mask_match_inds]
-            #     #print("[DEBUG] mask_gti :", mask_gti.shape)
-            #     mask_preds = (
-            #         pred_coeffs_pos @ mask_protos[bs].view(c, -1)).view(
-            #             -1, mask_h, mask_w) # predicted instance masks (proto_pred * seg_pred coeff w.r.t. positive samples)
-            #     #print("[DEBUG] mask_preds :", mask_preds.shape)                        
-            #     loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
-            #     #print("[DEBUG] loss_mask_full :", loss_mask_full.shape)  
-            #     _loss_mask = (self.crop_mask(loss_mask_full[None],
-            #                                  match_boxes).mean(dim=(2, 3)) /
-            #                   bbox_area)
-            #     #print("[DEBUG] before loss_mask :", loss_mask.shape) 
-            #     loss_mask += _loss_mask.mean()                
-            #     #print("[DEBUG] _loss_mask.mean() :", _loss_mask.mean().shape)  
-            #     #print("[DEBUG] after loss_mask :", loss_mask.shape) 
+                bbox_area = (normed_boxes[:, 2:] -
+                             normed_boxes[:, :2]).prod(dim=1)
+                if not mask_match_inds.any():
+                    continue
+                assert not self.mask_overlap
+                mask_gti = batch_gt_masks[mask_match_inds]
+                #print("[DEBUG] mask_gti :", mask_gti.shape)
+                mask_preds = (
+                    pred_coeffs_pos @ proto_preds[bs].view(c, -1)).view(
+                        -1, mask_h, mask_w) # predicted instance masks (proto_pred * seg_pred coeff w.r.t. positive samples)
+                #print("[DEBUG] mask_preds :", mask_preds.shape)                        
+                loss_mask_full = self.loss_mask(mask_preds, mask_gti) # pixel-wise loss (CrossEntropyLoss) --> (N_pos, mask_h, mask_w)
+                #print("[DEBUG] loss_mask_full :", loss_mask_full.shape)  
+                _loss_mask = (self.crop_mask(loss_mask_full[None],
+                                             match_boxes).mean(dim=(2, 3)) /
+                              bbox_area)
+                #print("[DEBUG] before loss_mask :", loss_mask.shape) 
+                loss_mask += _loss_mask.mean()                
+                #print("[DEBUG] _loss_mask.mean() :", _loss_mask.mean().shape)  
+                #print("[DEBUG] after loss_mask :", loss_mask.shape) 
 
         else:
             loss_bbox = flatten_pred_bboxes.sum() * 0
             loss_dfl = flatten_pred_bboxes.sum() * 0
-            # loss_mask = flatten_pred_coeffs.sum() * 0
-            loss_mask = semantic_logits.sum() * 0
-
+            loss_mask = flatten_pred_coeffs.sum() * 0
+            loss_sem = sem_fused.sum() * 0
         _, world_size = get_dist_info()
         #print("[DEBUG] finish calculating loss by feat") 
 
         return dict(loss_cls=loss_cls * num_imgs * world_size,
                     loss_bbox=loss_bbox * num_imgs * world_size,
                     loss_dfl=loss_dfl * num_imgs * world_size,
-                    # loss_mask=loss_mask * self.loss_mask_weight * world_size
-                    loss_mask=loss_mask * world_size,)
+                    loss_mask=loss_mask * self.loss_mask_weight * world_size,
+                    loss_sem=loss_sem * self.loss_sem_mask_weight * world_size)

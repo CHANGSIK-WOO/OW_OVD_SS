@@ -161,7 +161,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                                       mask_channels=self.mask_channels,
                                       norm_cfg=self.norm_cfg,
                                       act_cfg=self.act_cfg)
-        if self.freeze_bbox or self.freeze_bbox:
+        if self.freeze_bbox or self.freeze_all:
             self._freeze_all()
 
         

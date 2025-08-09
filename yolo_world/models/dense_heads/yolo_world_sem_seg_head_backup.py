@@ -125,25 +125,25 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
                               kernel_size=1)))
             
             # # (B, mask_channels, H, W), mask_channels = 32
-            # self.seg_preds.append(
-            #     nn.Sequential(
-            #         ConvModule(in_channels=self.in_channels[i],
-            #                    out_channels=seg_out_channels,
-            #                    kernel_size=3,
-            #                    stride=1,
-            #                    padding=1,
-            #                    norm_cfg=self.norm_cfg,
-            #                    act_cfg=self.act_cfg),
-            #         ConvModule(in_channels=seg_out_channels,
-            #                    out_channels=seg_out_channels,
-            #                    kernel_size=3,
-            #                    stride=1,
-            #                    padding=1,
-            #                    norm_cfg=self.norm_cfg,
-            #                    act_cfg=self.act_cfg),
-            #         nn.Conv2d(in_channels=seg_out_channels,
-            #                   out_channels=self.mask_channels,
-            #                   kernel_size=1)))
+            self.seg_preds.append(
+                nn.Sequential(
+                    ConvModule(in_channels=self.in_channels[i],
+                               out_channels=seg_out_channels,
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               norm_cfg=self.norm_cfg,
+                               act_cfg=self.act_cfg),
+                    ConvModule(in_channels=seg_out_channels,
+                               out_channels=seg_out_channels,
+                               kernel_size=3,
+                               stride=1,
+                               padding=1,
+                               norm_cfg=self.norm_cfg,
+                               act_cfg=self.act_cfg),
+                    nn.Conv2d(in_channels=seg_out_channels,
+                              out_channels=self.mask_channels,
+                              kernel_size=1)))
 
             if self.use_bn_head:
                 self.cls_contrasts.append(
@@ -203,26 +203,31 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         mask_protos = self.proto_pred(img_feats[0]) # (B, mask_channels, H, W)
         semantic_logits = self.semantic_pred(mask_protos) # (B, num_classes, H, W)
 
-        # cls_logit, bbox_preds, bbox_dist_preds, coeff_preds = multi_apply(
-        #     self.forward_single, img_feats, txt_feats, self.cls_preds,
-        #     self.reg_preds, self.cls_contrasts, self.seg_preds)
-        
-        cls_logit, bbox_preds, bbox_dist_preds, _ = multi_apply(
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds = multi_apply(
             self.forward_single, img_feats, txt_feats, self.cls_preds,
-            self.reg_preds, self.cls_contrasts, self.seg_preds)        
+            self.reg_preds, self.cls_contrasts, self.seg_preds)
+        
+        # cls_logit, bbox_preds, bbox_dist_preds, _ = multi_apply(
+        #     self.forward_single, img_feats, txt_feats, self.cls_preds,
+        #     self.reg_preds, self.cls_contrasts,)        
         
         if self.training:
             #return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos
-            return cls_logit, bbox_preds, bbox_dist_preds, mask_protos, semantic_logits
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits
         else:
             #return cls_logit, bbox_preds, None, coeff_preds, mask_protos
-            return cls_logit, bbox_preds, None, mask_protos, semantic_logits
+            return cls_logit, bbox_preds, None, coeff_preds, mask_protos, semantic_logits
 
+    # def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
+    #                    cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
+    #                    cls_contrast: nn.ModuleList,
+    #                    seg_pred: nn.ModuleList) -> Tuple:
 
     def forward_single(self, img_feat: Tensor, txt_feat: Tensor,
                        cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
                        cls_contrast: nn.ModuleList,
-                       seg_pred: nn.ModuleList) -> Tuple:
+                       seg_pred: nn.ModuleList,
+                       ) -> Tuple:
         """Forward feature of a single scale level."""
         #print("[DEBUG] YOLOWorldSegHeadModule_forward_single :")
         b, _, h, w = img_feat.shape
@@ -230,7 +235,7 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
         cls_logit = cls_contrast(cls_embed, txt_feat) # cls_embed - txt_feat cosine similarity for cls_logit (class score map)
         bbox_dist_preds = reg_pred(img_feat) 
 
-        # coeff_pred = seg_pred(img_feat)
+        coeff_pred = seg_pred(img_feat)
         
         if self.reg_max > 1: # reg_max = 16 
             bbox_dist_preds = bbox_dist_preds.reshape(
@@ -268,12 +273,12 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
             bbox_preds = bbox_dist_preds
 
         if self.training:
-            #return cls_logit, bbox_preds, bbox_dist_preds, coeff_pred
-            return cls_logit, bbox_preds, bbox_dist_preds, None
+            return cls_logit, bbox_preds, bbox_dist_preds, coeff_pred
+            # return cls_logit, bbox_preds, bbox_dist_preds, None
         
         else:
-            #return cls_logit, bbox_preds, None, coeff_pred
-            return cls_logit, bbox_preds, None, None
+            return cls_logit, bbox_preds, None, coeff_pred
+            # return cls_logit, bbox_preds, None, None
 
 
 
@@ -375,12 +380,17 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
          batch_img_metas) = outputs
 
         outs = self(img_feats, txt_feats)
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits = outs
 
         loss_inputs = outs + (batch_gt_instances, batch_img_metas,
                               batch_gt_instances_ignore)
         losses = self.loss_by_feat(*loss_inputs)
 
-        predictions = self.predict_by_feat(*outs,
+        predictions = self.predict_by_feat(cls_scores = cls_logit,
+                                           bbox_preds=bbox_preds,
+                                           objectnesses=None,
+                                           coeff_preds=coeff_preds,
+                                           proto_preds=mask_protos,     
                                            batch_img_metas=batch_img_metas,
                                            cfg=proposal_cfg)
         return losses, predictions
@@ -404,7 +414,13 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             data_samples.metainfo for data_samples in batch_data_samples
         ]
         outs = self(img_feats, txt_feats)
-        predictions = self.predict_by_feat(*outs,
+        cls_logit, bbox_preds, bbox_dist_preds, coeff_preds, mask_protos, semantic_logits = outs
+
+        predictions = self.predict_by_feat(cls_scores = cls_logit,
+                                           bbox_preds=bbox_preds,
+                                           objectnesses=None,
+                                           coeff_preds=coeff_preds,
+                                           proto_preds=mask_protos,                                           
                                            batch_img_metas=batch_img_metas,
                                            rescale=rescale)
         return predictions
@@ -424,7 +440,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             cls_scores: Sequence[Tensor],
             bbox_preds: Sequence[Tensor],
             bbox_dist_preds: Sequence[Tensor],
-            #coeff_preds: Sequence[Tensor],
+            coeff_preds: Sequence[Tensor],
             mask_protos: Tensor,
             semantic_logits: Tensor,
             batch_gt_instances: Sequence[InstanceData],
@@ -642,15 +658,28 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             semantic_gt = torch.zeros((B, H, W),
                                       dtype=torch.long,
                                       device=semantic_logits.device)
-            
-            for b in range(B):
-                gt_instances = batch_gt_instances[b]
-                masks = gt_instances.masks.to_tensor(dtype=torch.bool,
-                                                     device=semantic_logits.device)
-                labels = gt_instances.labels
 
-                for m, l in zip(masks, labels):
-                    semantic_gt[b][m] = l
+            # Total ground truth instances
+            # shape: (N, 6) : [img_idx, class_id, x1, y1, x2, y2]
+            all_gt_instances = batch_gt_instances  # shape: (N, 6)
+            all_gt_masks = batch_gt_masks  # shape: (N, H, W)
+
+            for b in range(B):
+              assigned_idxs = assigned_gt_idxs[b]         # shape: (8400,)
+              fg_mask = fg_mask_pre_prior[b]              # shape: (8400,)
+    
+              # positive prediction indices
+              # shape: (~N_pos,) : indices of positive samples in the flattened grid cells
+              pos_pred_inds = fg_mask.nonzero(as_tuple=False).squeeze(1)  # shape: (~N_pos,)
+              pos_gt_inds = assigned_idxs[pos_pred_inds]                  # shape: (~N_pos,)
+    
+              for gt_ind in pos_gt_inds.unique():
+                if gt_ind < 0:
+                  continue  # -1: no match
+                gt = all_gt_instances[gt_ind]
+                mask = all_gt_masks[gt_ind]  # shape: (H, W)
+                label = int(gt[1])           # class_id
+                semantic_gt[b][mask] = label
             
             if semantic_gt.shape[-2:] != semantic_logits.shape[-2:]:
                 semantic_gt = F.interpolate(semantic_gt.unsqueeze(1).float(),
