@@ -5,7 +5,7 @@ custom_imports = dict(imports=['yolo_world'], allow_failed_imports=False)
 # hyper-parameters
 num_classes = 1203
 num_training_classes = 80
-max_epochs = 3 # Maximum training epochs
+max_epochs = 1 # Maximum training epochs
 close_mosaic_epochs = 10
 save_epoch_intervals = 1
 text_channels = 512
@@ -235,9 +235,8 @@ coco_val_dataset = dict(
                  test_mode=True,
                  ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
                  data_prefix=dict(img=''),
-                 indices=list(range(2000)),
                  batch_shapes_cfg=None,
-                 ),
+                 indices=list(range(1000))),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
     pipeline=test_pipeline)
 

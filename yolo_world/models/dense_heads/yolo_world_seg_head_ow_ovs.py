@@ -1,17 +1,21 @@
 # Copyright (c) Lin Song. All rights reserved.
 import math
+import copy
 from typing import List, Optional, Tuple, Union, Sequence
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import numpy as np
+import os
+import mmcv
+from mmcv.cnn import ConvModule
+from mmengine.config import ConfigDict
 
 from torch import Tensor
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from mmcv.cnn import ConvModule
-from mmengine.config import ConfigDict
 from mmengine.dist import get_dist_info
 from mmengine.structures import InstanceData
 from mmdet.structures import SampleList
@@ -388,7 +392,8 @@ class OurSegHead(YOLOv5InsHead):
         # do not use att_embeddings
         if self.att_embeddings is None:
             loss_inputs = outs + (None, batch_data_samples['bboxes_labels'],
-                                    batch_data_samples['img_metas'])
+                                  batch_data_samples['masks'],
+                                  batch_data_samples['img_metas'])
             losses = self.loss_by_feat(*loss_inputs)
             return losses
         
@@ -1128,7 +1133,7 @@ class OurSegHead(YOLOv5InsHead):
             ]
             flatten_objectness = torch.cat(flatten_objectness, dim=1).sigmoid()
         else:
-            flatten_objectness = [None for _ in range(len(featmap_sizes))]
+            flatten_objectness = [None for _ in range(num_imgs)]
 
         results_list = []
         for (bboxes, scores, objectness, coeffs, mask_proto,
