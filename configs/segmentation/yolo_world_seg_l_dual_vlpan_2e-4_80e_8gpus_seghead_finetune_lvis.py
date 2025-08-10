@@ -233,10 +233,13 @@ coco_val_dataset = dict(
                  batch_shapes_cfg=None),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
     pipeline=test_pipeline)
-val_dataloader = dict(dataset=coco_val_dataset)
+
+val_dataloader = dict(persistent_workers=persistent_workers,
+                      dataset=dict(**coco_val_dataset['dataset'], indices=list(range(500))))
 test_dataloader = val_dataloader
 
-val_evaluator = dict(type='mmdet.LVISMetric',
+val_evaluator = dict(_delete_=True,
+                     type='mmdet.LVISMetric',
                      ann_file='../drive/MyDrive/data/coco/lvis/lvis_v1_val.json',
                      metric=['bbox', 'segm'])
 test_evaluator = val_evaluator
