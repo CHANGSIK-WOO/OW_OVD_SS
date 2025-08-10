@@ -403,18 +403,18 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                 meta = batch_img_metas[i]
                 input_h, input_w = meta['batch_input_shape']
 
-                # proto→입력 크기
+                # proto --> input size
                 sem_i = sem_label_all[i:i+1].float().unsqueeze(1)     # (1,1,Hm,Wm)
                 sem_i = F.interpolate(sem_i, size=(input_h, input_w), mode='nearest')  # (1,1,Hin,Win)
 
                 if rescale:
-                # pad crop (상단/좌측 pad만 고려하는 원본 규칙)
+                # pad crop 
                     if 'pad_param' in meta:
                         top_pad, bot_pad, left_pad, right_pad = meta['pad_param']
                         top, left = int(top_pad), int(left_pad)
                         bottom, right = int(input_h - top_pad), int(input_w - left_pad)
                         sem_i = sem_i[:, :, top:bottom, left:right]
-                    # 입력→원본 크기
+                    # input --> original image size
                     oh, ow = meta['ori_shape'][:2]
                     sem_i = F.interpolate(sem_i, size=(oh, ow), mode='nearest')   # (1,1,oh,ow)
                 
@@ -446,6 +446,8 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         outputs = unpack_gt_instances(batch_data_samples)
         (batch_gt_instances, batch_gt_instances_ignore,
          batch_img_metas) = outputs
+        
+
 
         outs = self(img_feats, txt_feats)
 
@@ -641,8 +643,8 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
 
 
         assigned_scores = assigned_result['assigned_scores'] # torch.Size([8, 8400, 80])
-        #print("[DEBUG] assigned_scores :", assigned_scores.shape)
-        #print("[DEBUG] assigned_scores :", assigned_scores[0])
+        # print("[DEBUG] assigned_scores :", assigned_scores.shape)
+        # print("[DEBUG] assigned_scores :", assigned_scores[0])
 
 
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior'] # torch.Size([8, 8400])
@@ -660,9 +662,9 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         
 
         loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()
-        #print("[DEBUG] loss_cls :", loss_cls)                
+        # print("[DEBUG] loss_cls :", loss_cls)                
         loss_cls /= assigned_scores_sum
-        #print("[DEBUG] afterloss_cls :", loss_cls)                
+        # print("[DEBUG] afterloss_cls :", loss_cls)                
 
 
         # rescale bbox
@@ -790,7 +792,6 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
             #(25.08.09) semantic segmentation loss
             sem_ups = [F.interpolate(s, (mask_h, mask_w), mode='bilinear', align_corners=False) for s in sem_logit]
             sem_fused = sum(sem_ups) / len(sem_ups)   
-            batch_gt_masks_copy = batch_gt_masks.deepcopy()
 
             IGNORE_IDX = 255
             sem_gt = torch.full((num_imgs, mask_h, mask_w), IGNORE_IDX, dtype=torch.long, device=proto_preds.device) # 255 full mask
@@ -808,8 +809,8 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                 for k in range(n_gt):                            # Overlap masks
                     sem_gt[bs][masks_b_bool[k]] = labels_b[k]
                 
-            print("[DEBUG] sem_gt :", sem_gt[0]) # torch.Size([8, 160, 160]) : 8 images in batch, 160 * 160 mask
-            print("[DEBUG] sem_fused :", sem_fused[0]) # torch.Size([8, 160, 160]) : 8 images in batch, 160 * 160 mask
+            # print("[DEBUG] sem_gt :", sem_gt[0]) # torch.Size([8, 160, 160]) : 8 images in batch, 160 * 160 mask
+            # print("[DEBUG] sem_fused :", sem_fused[0]) # torch.Size([8, 160, 160]) : 8 images in batch, 160 * 160 mask
             loss_sem = self.loss_sem_mask(sem_fused, sem_gt)
 
         else:

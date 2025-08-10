@@ -59,9 +59,14 @@ model = dict(
                                     freeze_bbox=True),
                    mask_overlap=mask_overlap,
                    loss_mask=dict(type='mmdet.CrossEntropyLoss',
-                                  use_sigmoid=False, # previously True --> False for semantic segmentation
+                                  use_sigmoid=True,
+                                  reduction='none'),
+                   loss_mask_weight=1.0,
+                   loss_sem_mask=dict(type='mmdet.CrossEntropyLoss',
+                                  use_sigmoid=False,
+                                  ignore_index=255,
                                   reduction='mean'),
-                   #loss_mask_weight=1.0
+                   loss_sem_mask_weight=1.0
                    ),
     train_cfg=dict(
         assigner=dict(type='YOLOWorldSegAssigner',
@@ -233,6 +238,7 @@ coco_val_dataset = dict(
                  test_mode=True,
                  ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
                  data_prefix=dict(img=''),
+                 #indices=list(range(2000)),
                  batch_shapes_cfg=None),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/captions/lvis_v1_class_captions.json',
     pipeline=test_pipeline)
