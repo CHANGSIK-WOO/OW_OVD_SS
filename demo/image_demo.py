@@ -1,6 +1,6 @@
 # Copyright (c) Tencent Inc. All rights reserved.
 import os
-import cv2
+import cv2 #openCV : read, write, show image
 import argparse
 import os.path as osp
 
@@ -14,11 +14,11 @@ from mmdet.utils import get_test_pipeline_cfg
 
 import supervision as sv
 
-BOUNDING_BOX_ANNOTATOR = sv.BoundingBoxAnnotator(thickness=1)
-MASK_ANNOTATOR = sv.MaskAnnotator()
+BOUNDING_BOX_ANNOTATOR = sv.BoundingBoxAnnotator(thickness=1) #box instance
+MASK_ANNOTATOR = sv.MaskAnnotator() #mask instance
 
 
-class LabelAnnotator(sv.LabelAnnotator):
+class LabelAnnotator(sv.LabelAnnotator): #label custom annotator
 
     @staticmethod
     def resolve_text_background_xyxy(
@@ -29,6 +29,7 @@ class LabelAnnotator(sv.LabelAnnotator):
         center_x, center_y = center_coordinates
         text_w, text_h = text_wh
         return center_x, center_y, center_x + text_w, center_y + text_h
+        # (x_min, y_min, x_max, y_max) means the top-left and bottom-right corners of the text box
 
 
 LABEL_ANNOTATOR = LabelAnnotator(text_padding=4,
@@ -38,6 +39,8 @@ LABEL_ANNOTATOR = LabelAnnotator(text_padding=4,
 
 def parse_args():
     parser = argparse.ArgumentParser(description='YOLO-World Demo')
+
+    #positional arguments(esssential)
     parser.add_argument('config', help='test config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument('image', help='image path, include image file or dir.')
@@ -46,10 +49,13 @@ def parse_args():
         help=
         'text prompts, including categories separated by a comma or a txt file with each line as a prompt.'
     )
+
+    #optional arguments
     parser.add_argument('--topk',
                         default=100,
                         type=int,
-                        help='keep topk predictions.')
+                        help='keep topk predictions.') 
+    #topk predictions means the number of top predictions to keep after filtering by score threshold
     parser.add_argument('--threshold',
                         default=0.1,
                         type=float,
@@ -186,9 +192,9 @@ if __name__ == '__main__':
     if args.text.endswith('.txt'):
         with open(args.text) as f:
             lines = f.readlines()
-        texts = [[t.rstrip('\r\n')] for t in lines] + [[' ']]
+        texts = [[t.rstrip('\r\n')] for t in lines] + [[' ']] # lines = ["bus\n", "person\n"] --> [['bus'], ['person'], [' ']]
     else:
-        texts = [[t.strip()] for t in args.text.split(',')] + [[' ']]
+        texts = [[t.strip()] for t in args.text.split(',')] + [[' ']] # "bus, person" --> [['bus'], ['person'], [' ']]
 
     output_dir = args.output_dir
     if not osp.exists(output_dir):
