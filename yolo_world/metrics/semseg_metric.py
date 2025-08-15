@@ -21,7 +21,7 @@ from mmdet.registry import METRICS
 
 
 @METRICS.register_module()
-class SemSegMetric(BaseMetric):
+class SemSegNewMetric(BaseMetric):
     """mIoU evaluation metric.
 
     Args:

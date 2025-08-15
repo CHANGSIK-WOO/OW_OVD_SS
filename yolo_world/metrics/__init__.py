@@ -1,5 +1,4 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from .lvis_metric import LVISMetric
-from .semseg_metric import SemSegMetric
+from .semseg_metric import SemSegNewMetric
 
-__all__ = ['LVISMetric','SemSegMetric']
+__all__ = ['SemSegNewMetric']
