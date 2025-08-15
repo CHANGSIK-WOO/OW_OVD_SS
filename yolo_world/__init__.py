@@ -11,3 +11,4 @@ from .models import *  # noqa
 from .datasets import *  # noqa
 from .engine import *  # noqa
 from .evaluator import *  # noqa
+from .metrics import *  # noqa
