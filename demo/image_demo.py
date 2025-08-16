@@ -40,7 +40,6 @@ LABEL_ANNOTATOR = LabelAnnotator(text_padding=4,
 
 # ======= [ADDED] semantic visualization helpers =======
 def _colorize_label_map(label_hw: np.ndarray) -> np.ndarray:
-    """label_hw: (H,W) int. class idº°·Î °íÁ¤ ³­¼ö »ö»ó ºÎ¿©."""
     h, w = label_hw.shape
     color = np.zeros((h, w, 3), dtype=np.uint8)
     for cls_id in np.unique(label_hw):
@@ -53,17 +52,17 @@ def _colorize_label_map(label_hw: np.ndarray) -> np.ndarray:
 def save_semantic_overlay(img_bgr: np.ndarray, sem_map, out_path: str, alpha: float = 0.5):
     """
     sem_map: torch.Tensor | np.ndarray
-      - (1,H,W) class id ¸Ê
-      - (C,H,W) ·ÎÁþ/È®·ü(ÀÌ °æ¿ì argmax·Î Å¬·¡½º ¸Ê ÃßÃâ)
-      - (H,W)   class id ¸Ê
+      - (1,H,W) class id map
+      - (C,H,W) logit
+      - (H,W)   class id map
     """
     if isinstance(sem_map, torch.Tensor):
         sem_map = sem_map.detach().cpu().numpy()
     if sem_map.ndim == 3 and sem_map.shape[0] > 1:
-        # (C,H,W) ¡æ argmax
+        # (C,H,W) â†’ argmax
         sem_map = sem_map.argmax(0)
     elif sem_map.ndim == 3 and sem_map.shape[0] == 1:
-        # (1,H,W) ¡æ (H,W)
+        # (1,H,W) â†’ (H,W)
         sem_map = sem_map[0]
     sem_map = sem_map.astype(np.int32)
 
@@ -218,7 +217,7 @@ def inference_detector(model,
         if sem_np.ndim == 3:
           sem_np = sem_np.argmax(0) if sem_np.shape[0] > 1 else sem_np[0]
         sem_np = sem_np.astype(np.int32)
-        sem_np[sem_np == bg_id] = -1   # -1 : colorize skip ¡æ transparent
+        sem_np[sem_np == bg_id] = -1   # -1 : colorize skip â†’ transparent
         save_semantic_overlay(img_bgr, sem_np, sem_out_path, alpha=0.5)
 
     if annotation:
