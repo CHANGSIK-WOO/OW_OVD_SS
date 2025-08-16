@@ -198,8 +198,8 @@ def inference_detector(model,
         images_dict = {}
         annotations_dict = {}
 
-        images_dict[osp.basename(image_path)] = anno_image
-        annotations_dict[osp.basename(image_path)] = detections
+        images_dict[osp.basename(image)] = anno_image
+        annotations_dict[osp.basename(image)] = detections
 
         ANNOTATIONS_DIRECTORY = os.makedirs(r"./annotations", exist_ok=True)
 

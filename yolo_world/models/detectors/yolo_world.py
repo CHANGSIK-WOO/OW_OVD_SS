@@ -6,6 +6,7 @@ from torch import Tensor
 from mmdet.structures import OptSampleList, SampleList
 from mmyolo.models.detectors import YOLODetector
 from mmyolo.registry import MODELS
+from mmengine.structures import InstanceData, PixelData
 
 
 @MODELS.register_module()
@@ -40,18 +41,22 @@ class YOLOWorldDetector(YOLODetector):
         processing.
         """
 
-        img_feats, txt_feats = self.extract_feat(batch_inputs,
-                                                 batch_data_samples)
+        img_feats, txt_feats = self.extract_feat(batch_inputs, batch_data_samples)
 
         # self.bbox_head.num_classes = self.num_test_classes
         self.bbox_head.num_classes = txt_feats[0].shape[0]
-        results_list = self.bbox_head.predict(img_feats,
-                                              txt_feats,
-                                              batch_data_samples,
-                                              rescale=rescale)
+        results_list, sem_list = self.bbox_head.predict(img_feats,
+                                                        txt_feats,
+                                                        batch_data_samples,
+                                                        rescale=rescale)
 
+        #instance results to batch_data_samples
         batch_data_samples = self.add_pred_to_datasample(
             batch_data_samples, results_list)
+        
+        for i, data_sample in enumerate(batch_data_samples):
+            data_sample.pre_sem_seg = PixelData(data=sem_list[i])
+
         return batch_data_samples
 
     def reparameterize(self, texts: List[List[str]]) -> None:

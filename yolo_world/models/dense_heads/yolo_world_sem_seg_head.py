@@ -398,6 +398,8 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         
         outs = self(img_feats, txt_feats)
         cls_logit, bbox_preds, _, coeff_preds, mask_protos, sem_seg_logit = outs
+
+        #instance results (bbox, mask)
         predictions = self.predict_by_feat(cls_scores = cls_logit,
                                            bbox_preds = bbox_preds, 
                                            objectnesses = None, 
@@ -412,6 +414,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         #                                    batch_img_metas=batch_img_metas,
         #                                    rescale=rescale)
 
+        sem_list = list()
         B = sem_seg_logit.shape[0] # num_imgs
         for i in range(B):
             meta = batch_img_metas[i]
@@ -420,8 +423,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
 
             # upsampling to input resolutions
             logit_i = sem_seg_logit[i:i+1]  # (1, C, Hm, Wm)
-            logit_i = F.interpolate(logit_i, size=(in_h, in_w),
-                                    mode='bilinear', align_corners=False)
+            logit_i = F.interpolate(logit_i, size=(in_h, in_w), mode='bilinear', align_corners=False)
 
             # pad crop
             if 'pad_param' in meta and meta['pad_param'] is not None:
@@ -432,16 +434,13 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
 
             # rescaling to original resolutions for demo
             if rescale:
-                logit_i = F.interpolate(logit_i, size=(ori_h, ori_w),
-                                        mode='bilinear', align_corners=False)
+                logit_i = F.interpolate(logit_i, size=(ori_h, ori_w), mode='bilinear', align_corners=False)
 
             # per-pixel class prediction using crossentropyloss --> argmax enough 
             pred_sem = logit_i.argmax(dim=1).to(torch.int64).squeeze(0)  # (H, W)
+            sem_list += [pred_sem]
 
-            # append result instance
-            predictions[i].pred_sem_seg = PixelData(data=pred_sem)
-
-        return predictions
+        return predictions, sem_list
 
     def aug_test(self,
                  aug_batch_feats,
