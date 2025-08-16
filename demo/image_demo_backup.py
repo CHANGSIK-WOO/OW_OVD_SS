@@ -3,8 +3,6 @@ import os
 import cv2
 import argparse
 import os.path as osp
-import numpy as np
-
 
 import torch
 from mmengine.config import Config, DictAction
@@ -15,29 +13,6 @@ from mmdet.apis import init_detector
 from mmdet.utils import get_test_pipeline_cfg
 
 import supervision as sv
-
-def _build_palette(num_classes: int, seed: int = 42):
-    """ 0~num_classes-1 colored array (num_classes, 3)."""
-    rng = np.random.RandomState(seed)
-    palette = rng.randint(0, 255, size=(num_classes, 3), dtype=np.uint8)
-    # if num_classes > 0: palette[0] = np.array([0, 0, 0], dtype=np.uint8)
-    return palette
-
-def _colorize_sem_map(sem_map: np.ndarray, palette: np.ndarray) -> np.ndarray:
-    """
-    sem_map: (H, W) int32/int64
-    palette: (C, 3) uint8
-    return: (H, W, 3) uint8 color map
-    """
-    h, w = sem_map.shape
-    sem_map_clamped = np.clip(sem_map, 0, len(palette) - 1)
-    color = palette[sem_map_clamped]  # (H, W, 3)
-    return color
-
-def _overlay(image_bgr: np.ndarray, color_map_bgr: np.ndarray, alpha: float = 0.5) -> np.ndarray:
-
-    return cv2.addWeighted(color_map_bgr, alpha, image_bgr, 1.0 - alpha, 0)
-
 
 BOUNDING_BOX_ANNOTATOR = sv.BoundingBoxAnnotator(thickness=1)
 MASK_ANNOTATOR = sv.MaskAnnotator()
@@ -119,22 +94,16 @@ def inference_detector(model,
                        use_amp=False,
                        show=False,
                        annotation=False):
-    
-    # prepare pipeline
     data_info = dict(img_id=0, img_path=image, texts=texts)
     data_info = test_pipeline(data_info)
     data_batch = dict(inputs=data_info['inputs'].unsqueeze(0),
                       data_samples=[data_info['data_samples']])
 
-    # inference
     with autocast(enabled=use_amp), torch.no_grad():
         output = model.test_step(data_batch)[0]
         pred_instances = output.pred_instances
         pred_instances = pred_instances[pred_instances.scores.float() >
                                         score_thr]
-        
-        pred_sem_seg = getattr(output, 'pred_sem_seg', None)
-
 
     if len(pred_instances.scores) > max_dets:
         indices = pred_instances.scores.float().topk(max_dets)[1]
@@ -142,7 +111,11 @@ def inference_detector(model,
 
     pred_instances = pred_instances.cpu().numpy()
 
-    masks = pred_instances['masks'] if 'masks' in pred_instances else None
+    if 'masks' in pred_instances:
+        masks = pred_instances['masks']
+    else:
+        masks = None
+
     detections = sv.Detections(xyxy=pred_instances['bboxes'],
                                class_id=pred_instances['labels'],
                                confidence=pred_instances['scores'],
@@ -154,45 +127,13 @@ def inference_detector(model,
     ]
 
     # label images
-    image_bgr  = cv2.imread(image)
-    anno_image = image_bgr.copy()
-
-    drawn  = BOUNDING_BOX_ANNOTATOR.annotate(image_bgr.copy(), detections)
-    drawn = LABEL_ANNOTATOR.annotate(drawn, detections, labels=labels)
+    image = cv2.imread(image_path)
+    anno_image = image.copy()
+    image = BOUNDING_BOX_ANNOTATOR.annotate(image, detections)
+    image = LABEL_ANNOTATOR.annotate(image, detections, labels=labels)
     if masks is not None:
-        drawn = MASK_ANNOTATOR.annotate(drawn, detections)
-
-    base = osp.splitext(osp.basename(image))[0]
-    cv2.imwrite(osp.join(output_dir, f"{base}.png"), drawn)
-
-    if pred_sem_seg is not None and hasattr(pred_sem_seg, 'data'):
-        # pred_sem_seg.data: (H, W) LongTensor
-        sem_map = pred_sem_seg.data.detach().cpu().numpy().astype(np.int32)  # (H, W)
-
-        num_classes = len(texts)  
-        palette = _build_palette(num_classes=max(1, num_classes))
-        color_map = _colorize_sem_map(sem_map, palette)  
-
-        color_map_bgr = color_map  
-
-        overlay = _overlay(anno_image, color_map_bgr, alpha=0.5)
-
-        cv2.imwrite(osp.join(output_dir, f"{base}_sem.png"), color_map_bgr)
-        cv2.imwrite(osp.join(output_dir, f"{base}_overlay.png"), overlay)
-
-        if show:
-            cv2.imshow('Detections', drawn)
-            cv2.imshow('SemMap', color_map_bgr)
-            cv2.imshow('Overlay', overlay)
-            k = cv2.waitKey(0)
-            if k == 27:
-                cv2.destroyAllWindows()
-    else:
-        if show:
-            cv2.imshow('Detections', drawn)
-            k = cv2.waitKey(0)
-            if k == 27:
-                cv2.destroyAllWindows()
+        image = MASK_ANNOTATOR.annotate(image, detections)
+    cv2.imwrite(osp.join(output_dir, osp.basename(image_path)), image)
 
     if annotation:
         images_dict = {}
@@ -214,6 +155,13 @@ def inference_detector(model,
                 min_image_area_percentage=MIN_IMAGE_AREA_PERCENTAGE,
                 max_image_area_percentage=MAX_IMAGE_AREA_PERCENTAGE,
                 approximation_percentage=APPROXIMATION_PERCENTAGE)
+
+    if show:
+        cv2.imshow('Image', image)  # Provide window name
+        k = cv2.waitKey(0)
+        if k == 27:
+            # wait for ESC key to exit
+            cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
