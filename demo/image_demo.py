@@ -5,6 +5,7 @@ import argparse
 import os.path as osp
 
 import torch
+import numpy as np
 from mmengine.config import Config, DictAction
 from mmengine.runner.amp import autocast
 from mmengine.dataset import Compose
@@ -35,6 +36,48 @@ class LabelAnnotator(sv.LabelAnnotator): #label custom annotator
 LABEL_ANNOTATOR = LabelAnnotator(text_padding=4,
                                  text_scale=0.5,
                                  text_thickness=1)
+
+
+# ======= [ADDED] semantic visualization helpers =======
+def _colorize_label_map(label_hw: np.ndarray) -> np.ndarray:
+    """label_hw: (H,W) int. class idº°·Î °íÁ¤ ³­¼ö »ö»ó ºÎ¿©."""
+    h, w = label_hw.shape
+    color = np.zeros((h, w, 3), dtype=np.uint8)
+    for cls_id in np.unique(label_hw):
+        if cls_id < 0:
+            continue
+        rng = np.random.default_rng(int(cls_id))
+        color[label_hw == cls_id] = rng.integers(0, 256, size=3, dtype=np.uint8)
+    return color
+
+def save_semantic_overlay(img_bgr: np.ndarray, sem_map, out_path: str, alpha: float = 0.5):
+    """
+    sem_map: torch.Tensor | np.ndarray
+      - (1,H,W) class id ¸Ê
+      - (C,H,W) ·ÎÁþ/È®·ü(ÀÌ °æ¿ì argmax·Î Å¬·¡½º ¸Ê ÃßÃâ)
+      - (H,W)   class id ¸Ê
+    """
+    if isinstance(sem_map, torch.Tensor):
+        sem_map = sem_map.detach().cpu().numpy()
+    if sem_map.ndim == 3 and sem_map.shape[0] > 1:
+        # (C,H,W) ¡æ argmax
+        sem_map = sem_map.argmax(0)
+    elif sem_map.ndim == 3 and sem_map.shape[0] == 1:
+        # (1,H,W) ¡æ (H,W)
+        sem_map = sem_map[0]
+    sem_map = sem_map.astype(np.int32)
+
+    H, W = img_bgr.shape[:2]
+    if sem_map.shape != (H, W):
+        sem_map = cv2.resize(sem_map, (W, H), interpolation=cv2.INTER_NEAREST)
+
+    color = _colorize_label_map(sem_map)  # (H,W,3) uint8
+    overlay = (alpha * img_bgr + (1 - alpha) * color).astype(np.uint8)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    cv2.imwrite(out_path, overlay)
+# ======================================================
+
+
 
 
 def parse_args():
@@ -100,21 +143,43 @@ def inference_detector(model,
                        use_amp=False,
                        show=False,
                        annotation=False):
-    data_info = dict(img_id=0, img_path=image, texts=texts)
+    print(f"[Debug] Start Inference")
+    img_path = image
+    data_info = dict(img_id=0, img_path=img_path, texts=texts)
+    print(f"[Debug] data_info : {data_info}")
     data_info = test_pipeline(data_info)
+    print(f"[Debug] after test_pipeline data_info : {data_info}")
     data_batch = dict(inputs=data_info['inputs'].unsqueeze(0),
                       data_samples=[data_info['data_samples']])
+    print(f"[Debug] data_batch : {data_batch}")                    
 
     with autocast(enabled=use_amp), torch.no_grad():
         output = model.test_step(data_batch)[0]
+        print(f"output : {output}")
         pred_instances = output.pred_instances
-        pred_instances = pred_instances[pred_instances.scores.float() >
-                                        score_thr]
+        # [ADDED] fetch semantic map (if any)
+        sem_map = None
+        if hasattr(output, 'pred_sem_seg') and (output.pred_sem_seg is not None):
+            sem_map = output.pred_sem_seg.get('sem_seg', None)
+        print(f"[Debug] pred_instances : {pred_instances}")
+        print(f"[Debug] coeffs {pred_instances.coeffs.shape}")
+        print(f"[Debug] labels {pred_instances.labels.shape}")
+        print(f"[Debug] masks  {pred_instances.masks.shape} sum={pred_instances.masks.sum()}")
+        print(f"[Debug] scores {pred_instances.scores.shape}")
+        print(f"[Debug] bboxes {pred_instances.bboxes.shape}")
+        pred_instances = pred_instances[pred_instances.scores.float() > score_thr]
 
     if len(pred_instances.scores) > max_dets:
         indices = pred_instances.scores.float().topk(max_dets)[1]
         pred_instances = pred_instances[indices]
 
+    print(f"[Debug] (filtered) coeffs {pred_instances.coeffs.shape}")
+    print(f"[Debug] (filtered) labels {pred_instances.labels.shape}")
+    print(f"[Debug] (filtered) masks  {pred_instances.masks.shape} sum={pred_instances.masks.sum()}")
+    print(f"[Debug] (filtered) scores {pred_instances.scores.shape}")
+    print(f"[Debug] (filtered) bboxes {pred_instances.bboxes.shape}")
+
+    # === Detection visualization ===
     pred_instances = pred_instances.cpu().numpy()
 
     if 'masks' in pred_instances:
@@ -133,20 +198,35 @@ def inference_detector(model,
     ]
 
     # label images
-    image = cv2.imread(image_path)
-    anno_image = image.copy()
-    image = BOUNDING_BOX_ANNOTATOR.annotate(image, detections)
-    image = LABEL_ANNOTATOR.annotate(image, detections, labels=labels)
+    #image = cv2.imread(image_path)
+    img_bgr = cv2.imread(img_path)
+    anno_image = img_bgr.copy()
+    det_image = BOUNDING_BOX_ANNOTATOR.annotate(anno_image, detections)
+    det_image = LABEL_ANNOTATOR.annotate(det_image, detections, labels=labels)
     if masks is not None:
-        image = MASK_ANNOTATOR.annotate(image, detections)
-    cv2.imwrite(osp.join(output_dir, osp.basename(image_path)), image)
+      det_image = MASK_ANNOTATOR.annotate(det_image, detections)
+    cv2.imwrite(osp.join(output_dir, osp.basename(img_path)), det_image)
+
+    # save semantic overlay
+    sem_out_path = None
+    if sem_map is not None:
+        stem, _ = osp.splitext(osp.basename(img_path))
+        sem_out_path = osp.join(output_dir, f"{stem}_sem.png")
+        # bg_id(last class) exclusion
+        bg_id = len(texts) - 1
+        sem_np = sem_map.detach().cpu().numpy() if torch.is_tensor(sem_map) else sem_map
+        if sem_np.ndim == 3:
+          sem_np = sem_np.argmax(0) if sem_np.shape[0] > 1 else sem_np[0]
+        sem_np = sem_np.astype(np.int32)
+        sem_np[sem_np == bg_id] = -1   # -1 : colorize skip ¡æ transparent
+        save_semantic_overlay(img_bgr, sem_np, sem_out_path, alpha=0.5)
 
     if annotation:
         images_dict = {}
         annotations_dict = {}
 
-        images_dict[osp.basename(image_path)] = anno_image
-        annotations_dict[osp.basename(image_path)] = detections
+        images_dict[osp.basename(img_path)] = anno_image
+        annotations_dict[osp.basename(img_path)] = detections
 
         ANNOTATIONS_DIRECTORY = os.makedirs(r"./annotations", exist_ok=True)
 
@@ -163,10 +243,12 @@ def inference_detector(model,
                 approximation_percentage=APPROXIMATION_PERCENTAGE)
 
     if show:
-        cv2.imshow('Image', image)  # Provide window name
-        k = cv2.waitKey(0)
-        if k == 27:
-            # wait for ESC key to exit
+        cv2.imshow('Detections', det_image)
+        if sem_out_path is not None:
+            sem_vis = cv2.imread(sem_out_path)
+            if sem_vis is not None:
+                cv2.imshow('Semantic', sem_vis)
+        if cv2.waitKey(0) == 27:
             cv2.destroyAllWindows()
 
 

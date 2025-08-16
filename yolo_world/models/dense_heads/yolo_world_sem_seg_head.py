@@ -12,7 +12,7 @@ import mmcv
 from mmcv.cnn import ConvModule
 from mmengine.config import ConfigDict
 from mmengine.dist import get_dist_info
-from mmengine.structures import InstanceData
+from mmengine.structures import PixelData, InstanceData
 from mmdet.structures import SampleList
 from mmdet.utils import ConfigType, OptConfigType, OptInstanceList, OptMultiConfig, InstanceList
 from mmdet.models.utils import filter_scores_and_topk, multi_apply, unpack_gt_instances
@@ -336,7 +336,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
         """
         batch_img_metas = [data_samples.metainfo for data_samples in batch_data_samples]
         outs = self(img_feats, txt_feats)
-        predictions = self.predict_by_feat(*outs, batch_img_metas=batch_img_metas, rescale=rescale)
+        predictions = self.predict_by_feat(*outs, batch_img_metas=batch_img_metas, batch_data_samples = batch_data_samples, rescale=rescale)
         return predictions
 
     def aug_test(self,
@@ -355,6 +355,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                         coeff_preds: Optional[List[Tensor]] = None,
                         proto_preds: Optional[Tensor] = None,
                         batch_img_metas: Optional[List[dict]] = None,
+                        batch_data_samples: SampleList = None,
                         cfg: Optional[ConfigDict] = None,
                         rescale: bool = True,
                         with_nms: bool = True) -> List[InstanceData]:
@@ -517,9 +518,11 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                 h, w = ori_shape[:2] if rescale else img_meta['img_shape'][:2]
                 empty_results.masks = torch.zeros(
                     size=(0, h, w), dtype=torch.bool, device=bboxes.device)
-                # [NEW] attach semantic even if no instances
-                if sem_seg_this is not None:
-                    empty_results.sem_seg = sem_seg_this  # (H, W), int64
+                # attach semantic map to DataSample (not InstanceData)
+                if sem_seg_this is not None and batch_data_samples is not None:
+                    ds = batch_data_samples[img_idx]
+                    sem = sem_seg_this.unsqueeze(0) if sem_seg_this.dim() == 2 else sem_seg_this  # (1,H,W) or (C,H,W)
+                    ds.pred_sem_seg = PixelData(sem_seg=sem)
                 results_list.append(empty_results)
                 continue
 
@@ -600,10 +603,11 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                 h, w = ori_shape[:2] if rescale else img_meta['img_shape'][:2]
                 results.masks = torch.zeros(
                     size=(0, h, w), dtype=torch.bool, device=bboxes.device)
-
-            # [NEW] attach semantic seg map
-            if sem_seg_this is not None:
-                results.sem_seg = sem_seg_this  # (H, W), int64
+            # attach semantic seg map to DataSample (not InstanceData)
+            if sem_seg_this is not None and batch_data_samples is not None:
+                ds = batch_data_samples[img_idx]
+                sem = sem_seg_this.unsqueeze(0) if sem_seg_this.dim() == 2 else sem_seg_this  # (1,H,W) or (C,H,W)
+                ds.pred_sem_seg = PixelData(sem_seg=sem)
 
             results_list.append(results)
 
