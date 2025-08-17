@@ -1,7 +1,7 @@
 # Copyright (c) Tencent Inc. All rights reserved.
 from .yolo_world_head import YOLOWorldHead, YOLOWorldHeadModule, RepYOLOWorldHeadModule
 from .yolo_world_seg_head import YOLOWorldSegHead, YOLOWorldSegHeadModule
-from .yolo_world_sem_seg_head import YOLOWorldSemSegHead, YOLOWorldSemSegHeadModule # 25.07.26 add for semantic segmentation
+from .yolo_world_sem_seg_head import YOLOWorldSemSegHead, YOLOWorldSemSegHeadModule 
 from .yolo_world_seg_head_ow_ovs import OurSegHead , OurSegHeadModule 
 from .fomo_head import FOMOHead, FOMOHeadModule
 from .umb_head import UMBHead, UMBHeadModule

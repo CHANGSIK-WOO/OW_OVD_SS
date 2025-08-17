@@ -55,7 +55,7 @@ class YOLOWorldDetector(YOLODetector):
             batch_data_samples, results_list)
         
         for i, data_sample in enumerate(batch_data_samples):
-            data_sample.pre_sem_seg = PixelData(data=sem_list[i])
+            data_sample.pred_sem_seg = PixelData(data=sem_list[i])
 
         return batch_data_samples
 

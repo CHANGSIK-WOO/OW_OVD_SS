@@ -71,7 +71,9 @@ model = dict(
     train_cfg=dict(
         assigner=dict(type='YOLOWorldSegAssigner',
                       num_classes=num_training_classes)),
-    test_cfg=dict(mask_thr_binary=0.5, fast_test=True))
+    test_cfg=dict(mask_thr_binary=0.5, 
+                  fast_test=True,
+                  ))
 
 pre_transform = [
     dict(type='LoadImageFromFile', backend_args=_base_.backend_args),
