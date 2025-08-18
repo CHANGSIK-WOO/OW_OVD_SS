@@ -45,17 +45,14 @@ class YOLOWorldDetector(YOLODetector):
 
         # self.bbox_head.num_classes = self.num_test_classes
         self.bbox_head.num_classes = txt_feats[0].shape[0]
-        results_list, sem_list = self.bbox_head.predict(img_feats,
-                                                        txt_feats,
-                                                        batch_data_samples,
-                                                        rescale=rescale)
+        results_list = self.bbox_head.predict(img_feats, txt_feats, batch_data_samples, rescale=rescale)
 
         #instance results to batch_data_samples
-        batch_data_samples = self.add_pred_to_datasample(
-            batch_data_samples, results_list)
+        batch_data_samples = self.add_pred_to_datasample(batch_data_samples, results_list)
         
         for i, data_sample in enumerate(batch_data_samples):
-            data_sample.pred_sem_seg = PixelData(data=sem_list[i])
+            if hasattr(results_list[i], 'pred_sem_seg') and results_list[i].pred_sem_seg is not None:
+                data_sample.pred_sem_seg = PixelData(data=results_list[i].pred_sem_seg)
 
         return batch_data_samples
 

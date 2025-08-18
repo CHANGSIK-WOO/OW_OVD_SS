@@ -25,7 +25,7 @@ from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
 
 @MODELS.register_module()
-class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
+class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
                  *args,
                  embed_dims: int, 
@@ -222,7 +222,7 @@ class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
 
 
 @MODELS.register_module()
-class YOLOWorldSemSegHead(YOLOv5InsHead):
+class YOLOWorldSegHead(YOLOv5InsHead):
     def __init__(self,
                  head_module: ConfigType,
                  prior_generator: ConfigType = dict(
@@ -243,7 +243,7 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                  loss_dfl=dict(type='mmdet.DistributionFocalLoss',
                                reduction='mean',
                                loss_weight=1.5 / 4),
-                 mask_overlap: bool = True,
+                 mask_overlap: bool = False,
                  loss_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
                                               use_sigmoid=True,
                                               reduction='none'),
@@ -492,10 +492,56 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
                 img_meta=img_meta)
 
             if len(results.bboxes):
-                # ---------- instance mask ----------
                 masks = self.process_mask(mask_proto, results.coeffs,
                                           results.bboxes,
                                           (input_shape_h, input_shape_w), True)
+                
+                # Semantic inference (Option A: objectness=1 if None)
+                soft_masks = masks.squeeze(0).float() # (M, H, W), keep soft values
+                M = soft_masks.shape[0]
+                device = soft_masks.device
+
+                if M > 0 : 
+                    # scores: (M,)   labels: (M,)  
+                    # (Even if obj*cls might already have been applied,
+                    # this also safely handles the path where objectness is None)
+                    inst_scores = results.scores # (M,)
+                    inst_labels = results.labels # (M,)
+                    
+                    # One-hot for class bucket indexing
+                    SEM_K = self.num_classes + 1  # 0=background, 1..K=things
+                    one_hot = F.one_hot((inst_labels+1).to(torch.int64), num_classes=SEM_K).to(soft_masks.dtype)
+                    s = inst_scores.view(M, 1, 1) # (M,1,1)
+                    weighted_masks = s * soft_masks # (M, H, W)
+
+                    # S[k,h,w] = sum_i one_hot[i,k] * weighted_masks[i,h,w]
+                    S = torch.einsum('mk,mhw->khw', one_hot, weighted_masks)
+
+                    # Final class per pixel
+                    best_vals, best_ids = S.max(dim=0)   # torch.max (max, max_indices)
+                    sem_map = best_ids.to(torch.long)
+                    tau = 0.05
+                    sem_map[best_vals < tau] = 0  # set background ids = 0          
+
+                    # If rescale, resize semantic map to original size (ori_shape) (nearest)
+                    if rescale:
+                        if pad_param is not None:
+                            top_pad, _, left_pad, _ = pad_param
+                            top, left = int(top_pad), int(left_pad)
+                            bottom, right = int(input_shape_h - top_pad), int(input_shape_w - left_pad)
+                            sem_map = sem_map[top:bottom, left:right]  # pad crop
+
+                        sem_map = F.interpolate(sem_map[None, None].float(),
+                                                size=ori_shape[:2],
+                                                mode='nearest').squeeze(0).squeeze(0).to(torch.long)
+
+                    results.pred_sem_seg = sem_map.unsqueeze(0) # Framework convention: (1, H, W)
+
+                else:
+                    # Empty semantic map when no instances
+                    H, W = (ori_shape[0], ori_shape[1]) if rescale else (input_shape_h, input_shape_w)
+                    results.pred_sem_seg = torch.zeros((1, H, W), device=device, dtype=torch.long)                                 
+
                 if rescale:
                     if pad_param is not None:
                         # bbox minus pad param
@@ -534,91 +580,8 @@ class YOLOWorldSemSegHead(YOLOv5InsHead):
 
                 results.bboxes[:, 0::2].clamp_(0, ori_shape[1])
                 results.bboxes[:, 1::2].clamp_(0, ori_shape[0])
+
                 results.masks = masks.bool()
-
-                # ---------- Mask-classification ----------
-                CONF_THR = 0.05
-                BIN_THR = 0.50
-                UNCOVER_MIN_FRAC = 0.30
-
-                # 1) soft mask (proto x coeff) ¡æ sigmoid
-                c, mask_h, mask_w = mask_proto.shape
-                soft_masks = (results.coeffs @ mask_proto.view(c, -1)).view(-1, mask_h, mask_w).sigmoid()  # (N,Hm,Wm)
-
-                # 2) pad crop + ori resize 
-                soft_masks = soft_masks[None]
-                if rescale:
-                    if pad_param is not None:
-                        top_pad, _, left_pad, _ = pad_param
-                        top, left = int(top_pad), int(left_pad)
-                        bottom, right = int(input_shape_h - top_pad), int(input_shape_w - left_pad)
-                        soft_masks = soft_masks[:, :, top:bottom, left:right]
-                    soft_masks = F.interpolate(soft_masks, size=ori_shape, mode='bilinear', align_corners=False)
-                else:
-                    soft_masks = F.interpolate(soft_masks, size=(input_shape_h, input_shape_w),
-                                            mode='bilinear', align_corners=False)
-                soft_masks = soft_masks[0]  # (N,H,W)
-
-                inst_scores = results.scores
-                inst_labels = results.labels.to(torch.long)
-                H, W = soft_masks.shape[-2:]
-                device = soft_masks.device
-                num_classes = int(self.num_classes)
-
-                # 3) low-confidence pre-filter
-                if soft_masks.shape[0] > 0:
-                    keep = inst_scores >= CONF_THR
-                    soft_masks = soft_masks[keep]
-                    inst_scores = inst_scores[keep]
-                    inst_labels = inst_labels[keep]
-
-                # 4) occlusion removal 
-                kept_idx = []
-                if soft_masks.shape[0] > 0:
-                    order = torch.argsort(inst_scores, descending=True)
-                    soft_masks = soft_masks[order]
-                    inst_scores = inst_scores[order]
-                    inst_labels = inst_labels[order]
-
-                    covered = torch.zeros((H, W), dtype=torch.bool, device=device)
-                    for i in range(soft_masks.shape[0]):
-                        bin_mask = soft_masks[i] > BIN_THR
-                        area = bin_mask.sum()
-                        if area == 0:
-                            continue
-                        uncovered = bin_mask & (~covered)
-                        if uncovered.sum().float() / area.float() >= UNCOVER_MIN_FRAC:
-                            kept_idx.append(i)
-                            covered |= bin_mask
-
-                if len(kept_idx) > 0:
-                    soft_masks = soft_masks[kept_idx]
-                    inst_scores = inst_scores[kept_idx]
-                    inst_labels = inst_labels[kept_idx]
-                else:
-                    soft_masks = soft_masks[:0]
-                    inst_scores = inst_scores[:0]
-                    inst_labels = inst_labels[:0]
-
-                # 5) per-pixel argmax_i p_i(c_i)*m_i 
-                if soft_masks.shape[0] > 0:
-                    weighted = soft_masks * inst_scores[:, None, None]  # (N,H,W)
-                    winner = weighted.argmax(dim=0)                     # (H,W) argmax_i
-                    results.sem_seg = inst_labels[winner]               # (H,W) long
-
-
-                    sem_scores = soft_masks.new_zeros((num_classes, H, W))
-                    for cls in inst_labels.unique():
-                        cls_maps = weighted[inst_labels == cls]
-                        sem_scores[int(cls)] = cls_maps.max(dim=0).values
-                    results.sem_scores = sem_scores.contiguous()
-                else:
-                    results.sem_seg = torch.zeros((H, W), dtype=torch.long, device=device)
-                    results.sem_scores = torch.zeros((num_classes, H, W), device=device)
-
-
-
-
                 results_list.append(results)
             else:
                 h, w = ori_shape[:2] if rescale else img_meta['img_shape'][:2]

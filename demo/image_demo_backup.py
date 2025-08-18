@@ -85,7 +85,7 @@ def parse_args():
 
 
 def inference_detector(model,
-                       image,
+                       image_path,
                        texts,
                        test_pipeline,
                        max_dets=100,
@@ -94,7 +94,7 @@ def inference_detector(model,
                        use_amp=False,
                        show=False,
                        annotation=False):
-    data_info = dict(img_id=0, img_path=image, texts=texts)
+    data_info = dict(img_id=0, img_path=image_path, texts=texts)
     data_info = test_pipeline(data_info)
     data_batch = dict(inputs=data_info['inputs'].unsqueeze(0),
                       data_samples=[data_info['data_samples']])
@@ -142,7 +142,9 @@ def inference_detector(model,
         images_dict[osp.basename(image_path)] = anno_image
         annotations_dict[osp.basename(image_path)] = detections
 
-        ANNOTATIONS_DIRECTORY = os.makedirs(r"./annotations", exist_ok=True)
+        #ANNOTATIONS_DIRECTORY = os.makedirs(r"./annotations", exist_ok=True)
+        ANNOTATIONS_DIRECTORY = "./annotations"
+        os.makedirs(ANNOTATIONS_DIRECTORY, exist_ok=True)
 
         MIN_IMAGE_AREA_PERCENTAGE = 0.002
         MAX_IMAGE_AREA_PERCENTAGE = 0.80
