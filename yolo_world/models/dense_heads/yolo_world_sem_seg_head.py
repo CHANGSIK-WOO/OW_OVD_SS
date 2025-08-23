@@ -12,7 +12,7 @@ import mmcv
 from mmcv.cnn import ConvModule
 from mmengine.config import ConfigDict
 from mmengine.dist import get_dist_info
-from mmengine.structures import InstanceData
+from mmengine.structures import InstanceData, PixelData
 from mmdet.structures import SampleList
 from mmdet.utils import ConfigType, OptConfigType, OptInstanceList, OptMultiConfig, InstanceList
 from mmdet.models.utils import filter_scores_and_topk, multi_apply, unpack_gt_instances
@@ -23,9 +23,10 @@ from mmyolo.models.dense_heads.yolov5_ins_head import ProtoModule, YOLOv5InsHead
 
 from .yolo_world_head import ContrastiveHead, BNContrastiveHead
 
+# 25.08.20 test
 
 @MODELS.register_module()
-class YOLOWorldSegHeadModule(YOLOv8HeadModule):
+class YOLOWorldSemSegHeadModule(YOLOv8HeadModule):
     def __init__(self,
                  *args,
                  embed_dims: int, 
@@ -42,10 +43,12 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
         self.freeze_all = freeze_all
         self.use_bn_head = use_bn_head
         super().__init__(*args, **kwargs)
+        print("[DEBUG] INITIALIZE YOLOWorldSemSegHeadModule")
 
     def init_weights(self, prior_prob=0.01):
         """Initialize the weight and bias of PPYOLOE head."""
         super().init_weights()
+        print("[DEBUG] INITIALIZE WEIGHTS")
         for cls_pred, cls_contrast, stride in zip(self.cls_preds,
                                                   self.cls_contrasts,
                                                   self.featmap_strides):
@@ -58,6 +61,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def _init_layers(self) -> None:
         """initialize conv layers in YOLOv8 head."""
         # Init decouple head
+        print("[DEBUG] INITIALIZE LAYERS")
         self.cls_preds = nn.ModuleList()
         self.reg_preds = nn.ModuleList()
         self.seg_preds = nn.ModuleList()
@@ -160,6 +164,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
 
 
     def _freeze_all(self):
+        print("[DEBUG] FREEZE ALL")
         frozen_list = [self.cls_preds, self.reg_preds, self.cls_contrasts]
         if self.freeze_all:
             frozen_list.extend([self.proto_pred, self.seg_preds])
@@ -173,6 +178,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def train(self, mode: bool = True):
         """Convert the model into training mode while keep normalization layer
         frozen."""
+        print("[DEBUG] TRAIN")
         super().train(mode)
         if self.freeze_bbox or self.freeze_all:
             self._freeze_all()
@@ -180,6 +186,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
     def forward(self, img_feats: Tuple[Tensor],
                 txt_feats: Tensor) -> Tuple[List]:
         """Forward features from the upstream network."""
+        print("[DEBUG] FORWARD YOLOWorldSemSegHeadModule")
         assert len(img_feats) == self.num_levels
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         mask_protos = self.proto_pred(img_feats[0])
@@ -196,6 +203,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
                        cls_contrast: nn.ModuleList,
                        seg_pred: nn.ModuleList) -> Tuple:
         """Forward feature of a single scale level."""
+        print("[DEBUG] FORWARD SINGLE")
         b, _, h, w = img_feat.shape
         cls_embed = cls_pred(img_feat) # image feature map 
         cls_logit = cls_contrast(cls_embed, txt_feat) # cls_embed - txt_feat cosine similarity for cls_logit (class score map)
@@ -222,7 +230,7 @@ class YOLOWorldSegHeadModule(YOLOv8HeadModule):
 
 
 @MODELS.register_module()
-class YOLOWorldSegHead(YOLOv5InsHead):
+class YOLOWorldSemSegHead(YOLOv5InsHead):
     def __init__(self,
                  head_module: ConfigType,
                  prior_generator: ConfigType = dict(
@@ -245,12 +253,13 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                                loss_weight=1.5 / 4),
                  mask_overlap: bool = False,
                  loss_mask: ConfigType = dict(type='mmdet.CrossEntropyLoss',
-                                              use_sigmoid=True,
+                                              use_sigmoid=True, # True : output logit softmax -> sigmoid (Binary Mask, Multi-Label or Mask Prediction) / False : output logit softmax
                                               reduction='none'),
                  loss_mask_weight=0.05,
                  train_cfg: OptConfigType = None,
                  test_cfg: OptConfigType = None,
                  init_cfg: OptMultiConfig = None):
+        print("[DEBUG] INITIALIZE YOLOWorldSemSegHead")
         super().__init__(head_module=head_module,
                          prior_generator=prior_generator,
                          bbox_coder=bbox_coder,
@@ -271,6 +280,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
 
         The special_init function is designed to deal with this situation.
         """
+        print("[DEBUG] SPECIAL INIT")
         if self.train_cfg:
             self.assigner = TASK_UTILS.build(self.train_cfg.assigner)
             print(f"[DEBUG] YOLOWorldSegHead_Assigner class: {self.assigner.__class__.__name__}")
@@ -286,7 +296,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
              batch_data_samples: Union[list, dict]) -> dict:
         """Perform forward propagation and loss calculation of the detection
         head on the features of the upstream network."""
-
+        print("[DEBUG] LOSS")
         outs = self(img_feats, txt_feats)
         # Fast version
         loss_inputs = outs + (batch_data_samples['bboxes_labels'],
@@ -346,6 +356,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                   the last dimension 4 arrange as (x1, y1, x2, y2).
                 - masks (Tensor): Has a shape (num_instances, h, w).
         """
+        print("[DEBUG] PREDICT_BY_FEAT")
         assert len(cls_scores) == len(bbox_preds) == len(coeff_preds)
         if objectnesses is None:
             with_objectnesses = False
@@ -496,8 +507,9 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                                           results.bboxes,
                                           (input_shape_h, input_shape_w), True)
                 
-                # Semantic inference (Option A: objectness=1 if None)
-                soft_masks = masks.squeeze(0).float() # (M, H, W), keep soft values
+                # Semantic inference
+                soft_masks = masks.squeeze(0).float()   # (M, Hm, Wm)
+                soft_masks = F.interpolate(soft_masks[None], size=(input_shape_h, input_shape_w), mode='bilinear', align_corners=False).squeeze(0) # (M, Hin, Win)
                 M = soft_masks.shape[0]
                 device = soft_masks.device
 
@@ -520,27 +532,46 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                     # Final class per pixel
                     best_vals, best_ids = S.max(dim=0)   # torch.max (max, max_indices)
                     sem_map = best_ids.to(torch.long)
-                    tau = 0.05
-                    sem_map[best_vals < tau] = 0  # set background ids = 0          
+                    tau = 0.02
+                    sem_map[best_vals < tau] = 0  # set background ids = 0 
+
+                    conf_map = best_vals      
 
                     # If rescale, resize semantic map to original size (ori_shape) (nearest)
                     if rescale:
+                        print("rescale")
                         if pad_param is not None:
                             top_pad, _, left_pad, _ = pad_param
                             top, left = int(top_pad), int(left_pad)
                             bottom, right = int(input_shape_h - top_pad), int(input_shape_w - left_pad)
                             sem_map = sem_map[top:bottom, left:right]  # pad crop
+                            conf_map = conf_map[top:bottom, left:right]  # pad crop
 
+                        # print(f"[DEBUG] sem_map.shape before interpolate = {sem_map.shape}")
                         sem_map = F.interpolate(sem_map[None, None].float(),
                                                 size=ori_shape[:2],
                                                 mode='nearest').squeeze(0).squeeze(0).to(torch.long)
-
-                    results.pred_sem_seg = sem_map.unsqueeze(0) # Framework convention: (1, H, W)
+                        
+                        conf_map = F.interpolate(conf_map[None, None],
+                                                size=ori_shape[:2],
+                                                mode='bilinear').squeeze(0).squeeze(0).to(torch.float32)                        
+                        
+                    # print(f"[DEBUG] sem_map.shape after interpolate = {sem_map.shape}")
+                    # print(f"results : {results}")
+                    
+                    img_meta["pred_sem_seg"] = sem_map.unsqueeze(0) # Framework convention: (1, H, W)
+                    img_meta["pred_sem_conf"] = conf_map.unsqueeze(0) # Framework convention: (1, H, W)
+                    # print(f"img_meta : {img_meta}")
+                    # print(f'img_meta["pred_sem_seg"].shape : {img_meta["pred_sem_seg"].shape}')
+                    # print(f'pred_sem_seg unique idx : {img_meta["pred_sem_seg"].unique().tolist()}')
+                    # print(f'img_meta["pred_sem_conf"].shape : {img_meta["pred_sem_conf"].shape}')
+                    # print(f'pred_sem_conf unique idx : {img_meta["pred_sem_conf"].unique().tolist()}')                    
 
                 else:
+                    print("else")
                     # Empty semantic map when no instances
                     H, W = (ori_shape[0], ori_shape[1]) if rescale else (input_shape_h, input_shape_w)
-                    results.pred_sem_seg = torch.zeros((1, H, W), device=device, dtype=torch.long)                                 
+                    img_meta["pred_sem_seg"] = torch.zeros((1, H, W), device=device, dtype=torch.long)                            
 
                 if rescale:
                     if pad_param is not None:
@@ -588,6 +619,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                 results.masks = torch.zeros(
                     size=(0, h, w), dtype=torch.bool, device=bboxes.device)
                 results_list.append(results)
+        print(f"results_list : {results_list}")
         return results_list
 
     def loss_and_predict(
@@ -600,6 +632,8 @@ class YOLOWorldSegHead(YOLOv5InsHead):
         """Perform forward propagation of the head, then calculate loss and
         predictions from the features and data samples.
         """
+        
+        print("[DEBUG] LOSS_AND_PREDICT")
         outputs = unpack_gt_instances(batch_data_samples)
         (batch_gt_instances, batch_gt_instances_ignore,
          batch_img_metas) = outputs
@@ -618,6 +652,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
     def forward(self, img_feats: Tuple[Tensor],
                 txt_feats: Tensor) -> Tuple[List]:
         """Forward features from the upstream network."""
+        print("[DEBUG] FORWARD YOLOWorldSemSegHead")
         return self.head_module(img_feats, txt_feats)
 
     def predict(self,
@@ -628,6 +663,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
         """Perform forward propagation of the detection head and predict
         detection results on the features of the upstream network.
         """
+        print("[DEBUG] PREDICT")
         batch_img_metas = [
             data_samples.metainfo for data_samples in batch_data_samples
         ]
@@ -635,6 +671,26 @@ class YOLOWorldSegHead(YOLOv5InsHead):
         predictions = self.predict_by_feat(*outs,
                                            batch_img_metas=batch_img_metas,
                                            rescale=rescale)
+        
+        for ds, meta in zip(batch_data_samples, batch_img_metas):
+            # print(f"before batch_data_samples : {batch_data_samples}")
+            # print(f"batch_img_metas : {batch_img_metas}")
+
+            sem = meta.get("pred_sem_seg", None)
+            if sem is not None :
+                if not torch.is_tensor(sem): sem = torch.as_tensor(sem)
+            ds.pred_sem_seg = PixelData(data = sem.to(torch.long))
+
+            conf = meta.get("pred_sem_conf", None)
+            if conf is not None : 
+                if not torch.is_tensor(conf): conf = torch.as_tensor(conf)
+            ds.pred_sem_conf = PixelData(data = conf.to(torch.float32))            
+
+            
+            # print(f"ds.pred_sem_seg : {ds.pred_sem_seg}")
+            # print(f"ds.pred_sem_conf : {ds.pred_sem_conf}")
+            # print(f"after batch_data_samples : {batch_data_samples}")
+            
         return predictions
 
     def aug_test(self,
@@ -644,6 +700,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
                  with_ori_nms=False,
                  **kwargs):
         """Test function with test time augmentation."""
+        print("[DEBUG] AUG_TEST")
         raise NotImplementedError('aug_test is not implemented yet.')
 
     def loss_by_feat(
@@ -681,6 +738,7 @@ class YOLOWorldSegHead(YOLOv5InsHead):
         Returns:
             dict[str, Tensor]: A dictionary of losses.
         """
+        print("[DEBUG] LOSS_BY_FEAT")
         num_imgs = len(batch_img_metas) 
 
         current_featmap_sizes = [
