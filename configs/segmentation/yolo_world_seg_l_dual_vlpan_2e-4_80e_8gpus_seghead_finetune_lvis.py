@@ -1,6 +1,7 @@
 _base_ = (
     '../../third_party/mmyolo/configs/yolov8/yolov8_l_mask-refine_syncbn_fast_8xb16-500e_coco.py'
 )
+
 custom_imports = dict(imports=['yolo_world'], allow_failed_imports=False)
 # hyper-parameters
 num_classes = 1203
@@ -157,8 +158,8 @@ coco_train_dataset = dict(
     _delete_=True,
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
-                 data_root='../drive/MyDrive/data/coco/lvis/', #data_root='data/coco', 
-                 ann_file='lvis_v1_train.json', #ann_file='lvis/lvis_v1_train_base.json',
+                 data_root='data/coco/', #data_root='data/coco', 
+                 ann_file='annotations/lvis_v1_train.json', #ann_file='lvis/lvis_v1_train_base.json',
                  data_prefix=dict(img=''),
                  filter_cfg=dict(filter_empty_gt=True, min_size=32)),
     class_text_path='data/texts/lvis_v1_class_texts.json', #class_text_path='data/texts/lvis_v1_base_class_texts.json',
@@ -182,7 +183,9 @@ default_hooks = dict(param_scheduler=dict(scheduler_type='linear',
                                           max_epochs=max_epochs),
                      checkpoint=dict(max_keep_ckpts=-1,
                                      save_best=None,
-                                     interval=save_epoch_intervals))
+                                     interval=save_epoch_intervals),
+                    logger=dict(type='LoggerHook', interval=20))
+
 custom_hooks = [
     dict(type='EMAHook',
          ema_type='ExpMomentumEMA',
@@ -219,10 +222,10 @@ optim_wrapper = dict(optimizer=dict(
                                             dict(lr_mult=0.0),
                                             'head.head_module.reg_preds':
                                             dict(lr_mult=0.0),
-                                            'head.head_module.cls_preds':
-                                            dict(lr_mult=0.0),
-                                            'head.head_module.cls_contrasts':
-                                            dict(lr_mult=0.0)
+                                            # 'head.head_module.cls_preds':
+                                            # dict(lr_mult=0.0),
+                                            # 'head.head_module.cls_contrasts':
+                                            # dict(lr_mult=0.0)
                                         }),
                      constructor='YOLOWv5OptimizerConstructor')
 
@@ -231,9 +234,9 @@ coco_val_dataset = dict(
     _delete_=True,
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
-                 data_root='../drive/MyDrive/data/coco/lvis/', #data_root='data/coco/',
+                 data_root='data/coco/', #data_root='data/coco/',
                  test_mode=True,
-                 ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
+                 ann_file='annotations/lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
                  data_prefix=dict(img=''),
                  indices=list(range(2000)),
                  batch_shapes_cfg=None,
@@ -247,8 +250,24 @@ test_dataloader = val_dataloader
 
 val_evaluator = dict(_delete_=True,
                      type='mmdet.LVISMetric',
-                     ann_file='../drive/MyDrive/data/coco/lvis/lvis_v1_val.json',
+                     ann_file='data/coco/annotations/lvis_v1_val.json',
                      metric=['bbox', 'segm'])
 test_evaluator = val_evaluator
 find_unused_parameters = True
+
+vis_backends = [
+    dict(type='LocalVisBackend'),
+    dict(type='WandbVisBackend',
+         init_kwargs=dict(
+             project='ow_ovd_ss',
+             name='exp_yoloworld_lvis',
+             entity='jasoncswoo-korea-university'
+         ),
+         save_dir='wandb_logs')
+]
+
+visualizer = dict(
+    type='mmdet.DetLocalVisualizer',
+    vis_backends=vis_backends,
+    name='visualizer')
 # runtime settings
