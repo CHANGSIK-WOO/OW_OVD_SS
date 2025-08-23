@@ -262,7 +262,7 @@ vis_backends = [
          init_kwargs=dict(
              project='ow_ovd_ss',
              name='exp_yoloworld_lvis',
-             entity='CHANGSIKWOO'
+             entity='jasoncswoo-korea-university'
          ),
          save_dir='wandb_logs')
 ]
@@ -271,5 +271,4 @@ visualizer = dict(
     type='mmdet.DetLocalVisualizer',
     vis_backends=vis_backends,
     name='visualizer')
-
 # runtime settings
