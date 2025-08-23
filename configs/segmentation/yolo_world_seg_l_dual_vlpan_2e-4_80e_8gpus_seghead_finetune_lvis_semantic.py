@@ -62,11 +62,6 @@ model = dict(
                                   use_sigmoid=True,
                                   reduction='none'),
                    loss_mask_weight=1.0,
-                   loss_mask_seg=dict(type='mmdet.CrossEntropyLoss',
-                                  use_sigmoid=False,
-                                  ignore_index=255,
-                                  reduction='mean'),
-                   loss_mask_weight_seg=1.0
                    ),
     train_cfg=dict(
         assigner=dict(type='YOLOWorldSegAssigner',
@@ -160,8 +155,8 @@ coco_train_dataset = dict(
     _delete_=True,
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
-                 data_root='../drive/MyDrive/data/coco/lvis', #data_root='data/coco', 
-                 ann_file='lvis_v1_train.json', #ann_file='lvis/lvis_v1_train_base.json',
+                 data_root='data/coco/', #data_root='data/coco', 
+                 ann_file='annotations/lvis_v1_train.json', #ann_file='lvis/lvis_v1_train_base.json',
                  data_prefix=dict(img=''),
                  indices=list(range(2000)),
                  filter_cfg=dict(filter_empty_gt=True, min_size=32)),
@@ -187,7 +182,9 @@ default_hooks = dict(param_scheduler=dict(scheduler_type='linear',
                                           max_epochs=max_epochs),
                      checkpoint=dict(max_keep_ckpts=-1,
                                      save_best=None,
-                                     interval=save_epoch_intervals))
+                                     interval=save_epoch_intervals),
+                    logger=dict(type='LoggerHook', interval=20))
+ 
 custom_hooks = [
     dict(type='EMAHook',
          ema_type='ExpMomentumEMA',
@@ -237,9 +234,9 @@ coco_val_dataset = dict(
     _delete_=True,
     type='MultiModalDataset',
     dataset=dict(type='YOLOv5LVISV1Dataset',
-                 data_root='../drive/MyDrive/data/coco/lvis', #data_root='data/coco/',
+                 data_root='data/coco/', #data_root='data/coco/',
                  test_mode=True,
-                 ann_file='lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
+                 ann_file='annotations/lvis_v1_val.json', #ann_file='lvis/lvis_v1_val.json',
                  data_prefix=dict(img=''),
                  #indices=list(range(2000)),
                  batch_shapes_cfg=None),
@@ -249,7 +246,7 @@ val_dataloader = dict(dataset=coco_val_dataset)
 test_dataloader = val_dataloader
 
 val_evaluator = [dict(type='mmdet.LVISMetric',
-                     ann_file='../drive/MyDrive/data/coco/lvis/lvis_v1_val.json',
+                     ann_file='data/coco/annotations/lvis_v1_val.json',
                      metric=['segm']),
                  dict(type='SemSegNewMetric',
                       iou_metrics=['mIoU'],     
@@ -258,4 +255,21 @@ val_evaluator = [dict(type='mmdet.LVISMetric',
                 ]
 test_evaluator = val_evaluator
 find_unused_parameters = True
+
+vis_backends = [
+    dict(type='LocalVisBackend'),
+    dict(type='WandbVisBackend',
+         init_kwargs=dict(
+             project='ow_ovd_ss',
+             name='exp_yoloworld_lvis',
+             entity='CHANGSIKWOO'
+         ),
+         save_dir='wandb_logs')
+]
+
+visualizer = dict(
+    type='mmdet.DetLocalVisualizer',
+    vis_backends=vis_backends,
+    name='visualizer')
+
 # runtime settings
