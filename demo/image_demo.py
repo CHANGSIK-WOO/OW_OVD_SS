@@ -129,24 +129,33 @@ def inference_detector(model,
 
     # label images
     image = cv2.imread(image_path)
-    anno_image = image.copy()
+    anno_image = image.copy() #detection
+    sem_seg_image = image.copy()
 
     # ----- Semantic map overlay (if available) -----
-    sem_map = None
+    sem_map, sem_conf = None, None
+    
     if hasattr(output, 'pred_sem_seg') and output.pred_sem_seg is not None:
-        # PixelData(data: Tensor[1,H,W]) 또는 np.ndarray
+        # PixelData(data: Tensor[1,H,W]) : np.ndarray
         sem = output.pred_sem_seg
         sem_map = getattr(sem, 'data', sem)
         if torch.is_tensor(sem_map):
             sem_map = sem_map.detach().cpu().numpy()
-        sem_map = np.squeeze(sem_map)  # (H, W)     
+        sem_map = np.squeeze(sem_map)  # (H, W)   
+
+    if hasattr(output, 'pred_sem_conf') and output.pred_sem_conf is not None:
+        sc = output.pred_sem_conf
+        sem_conf = getattr(sc, 'data', sc)
+        if torch.is_tensor(sem_conf): sem_conf = sem_conf.detach().cpu().numpy()
+        sem_conf = np.squeeze(sem_conf)  # (H,W) float          
 
     if sem_map is not None:
-        # 크기 안 맞으면 nearest로 맞춤
+        #nearest
         if sem_map.shape[:2] != image.shape[:2]:
             sem_map = cv2.resize(sem_map.astype(np.uint8),
                                  (image.shape[1], image.shape[0]),
                                  interpolation=cv2.INTER_NEAREST)
+            
         # Pallete : 0=BG (No Color), 1..K= Class
         num_classes = max(int(sem_map.max()), 0)
         # texts : [[name], [name], ...] 
@@ -163,36 +172,91 @@ def inference_detector(model,
         alpha = 0.45
         
         fg = sem_map > 0
-        blended = image.copy()
+        blended = sem_seg_image.copy()
         blended[fg] = (image[fg] * (1 - alpha) + color_mask[fg] * alpha).astype(np.uint8)
-        image = blended
+        sem_seg_image = blended
 
         edges = cv2.Canny((sem_map > 0).astype(np.uint8) * 255, 0, 1)
-        image[edges > 0] = (0, 0, 0)  
+        sem_seg_image[edges > 0] = (0, 0, 0)  
 
-        legend_items = np.unique(sem_map)
-        legend_items = legend_items[legend_items > 0]  #
-        y0, dy, pad = 10, 18, 6
-        x0 = image.shape[1] - 10
-        for idx in legend_items[:25]: 
-            label = class_names[idx - 1] if idx - 1 < len(class_names) else f"class_{idx-1}"
-            txt = f"{label}"
-            (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            x1, y1 = x0 - tw - 30, y0
+            
+    if sem_conf is not None:
+        if sem_conf.shape[:2] != image.shape[:2]:
+            sem_conf = cv2.resize(sem_conf.astype(np.float32),
+                                (image.shape[1], image.shape[0]),
+                                interpolation=cv2.INTER_LINEAR)                
+        
 
-            cv2.rectangle(image, (x1 - 22, y1 - th - pad), (x1 - 4, y1 + pad), palette[idx].tolist(), -1)
-            cv2.putText(image, txt, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
-            y0 += dy
 
-    image = BOUNDING_BOX_ANNOTATOR.annotate(image, detections)
-    image = LABEL_ANNOTATOR.annotate(image, detections, labels=labels)
+        # legend_items = np.unique(sem_map)
+        # legend_items = legend_items[legend_items > 0]  #
+        # y0, dy, pad = 10, 18, 6
+        # x0 = image.shape[1] - 10
+        # for idx in legend_items[:25]: 
+        #     label = class_names[idx - 1] if idx - 1 < len(class_names) else f"class_{idx-1}"
+        #     txt = f"{label}"
+        #     (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        #     x1, y1 = x0 - tw - 30, y0
+
+        #     cv2.rectangle(sem_seg_image, (x1 - 22, y1 - th - pad), (x1 - 4, y1 + pad), palette[idx].tolist(), -1)
+        #     cv2.putText(sem_seg_image, txt, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
+        #     y0 += dy
+
+    # 1) detection-only
+    det_img = BOUNDING_BOX_ANNOTATOR.annotate(anno_image.copy(), detections)
+    det_img = LABEL_ANNOTATOR.annotate(det_img, detections, labels=labels)
     if masks is not None:
-        image = MASK_ANNOTATOR.annotate(image, detections)
+        det_img = MASK_ANNOTATOR.annotate(det_img, detections)
+    cv2.imwrite(osp.join(output_dir, osp.splitext(osp.basename(image_path))[0] + "_det.png"), det_img)
+
+    # 2) semantic-only (+ semantic score drawn on regions)
+    sem_only = sem_seg_image if sem_map is not None else image.copy()
+
+    # Semantic score labeling (using pred_sem_conf) -------------------------
+    if sem_map is not None and sem_conf is not None:
+        class_names = [t[0] for t in texts]
+        # Reuse the palette created above
+        MIN_AREA = 200  # ignore small components
+        # Class ids (exclude background 0)
+        for idx in np.unique(sem_map):
+            if idx <= 0:
+                continue
+            # Binary mask of this class
+            bin_mask = (sem_map == idx).astype(np.uint8)
+            cnts, _ = cv2.findContours(bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not cnts:
+                continue
+            # Only draw on the largest component (change to "for c in cnts" to draw on all)
+            c = max(cnts, key=cv2.contourArea)
+            if cv2.contourArea(c) < MIN_AREA:
+                continue
+            M = cv2.moments(c)
+            if M["m00"] == 0:
+                continue
+            cx, cy = int(M["m10"]/M["m00"]), int(M["m01"]/M["m00"])
+
+            # Semantic confidence of this class region (mean is stable, change to max if needed)
+            area_mask = (sem_map == idx)
+            sem_score = float(sem_conf[area_mask].mean()) if area_mask.any() else 0.0
+
+            label = class_names[idx-1] if 0 <= idx-1 < len(class_names) else f"class_{idx-1}"
+            # txt = f"{label} {sem_score:.2f}"
+            txt = f"{label}"
+            (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            x1 = max(cx - tw//2 - 6, 0); y1 = max(cy - th//2 - 6, 0)
+            x2 = min(x1 + tw + 12, sem_only.shape[1]-1); y2 = min(y1 + th + 12, sem_only.shape[0]-1)
+            # Class color background box + white text
+            cv2.rectangle(sem_only, (x1, y1), (x2, y2), palette[idx].tolist(), -1)
+            cv2.putText(sem_only, txt, (x1+6, y1+th+2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2, cv2.LINE_AA)
+    # ----------------------------------------------------------------------
+
+    cv2.imwrite(
+        osp.join(output_dir, osp.splitext(osp.basename(image_path))[0] + "_sem.png"),
+        sem_only
+    )
 
 
-
-
-    cv2.imwrite(osp.join(output_dir, osp.basename(image_path)), image)
 
     if annotation:
         images_dict = {}
@@ -213,14 +277,13 @@ def inference_detector(model,
                                                                                                                     min_image_area_percentage=MIN_IMAGE_AREA_PERCENTAGE,
                                                                                                                     max_image_area_percentage=MAX_IMAGE_AREA_PERCENTAGE,
                                                                                                                     approximation_percentage=APPROXIMATION_PERCENTAGE)
-    cv2.imwrite(osp.join(output_dir, osp.splitext(osp.basename(image_path))[0] + "_sem.png"), image)
 
-    if show:
-        cv2.imshow('Image', image)  # Provide window name
-        k = cv2.waitKey(0)
-        if k == 27:
-            # wait for ESC key to exit
-            cv2.destroyAllWindows()
+    # if show:
+    #     cv2.imshow('Image', image)  # Provide window name
+    #     k = cv2.waitKey(0)
+    #     if k == 27:
+    #         # wait for ESC key to exit
+    #         cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
